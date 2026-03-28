@@ -4,6 +4,7 @@ import { Model } from './services/fheService';
 import Marketplace from './pages/Marketplace';
 import InferencePortal from './pages/InferencePortal';
 import LabDashboard from './pages/LabDashboard';
+import DatasetUpload from './pages/DatasetUpload';
 import { Button } from './components/UI';
 import { CursorEffect } from './components/CursorEffect';
 import { LayeredStack } from './components/LayeredStack';
@@ -11,12 +12,13 @@ import { Shield, LayoutDashboard, ShoppingBag, Beaker, Wallet, LogOut, Github, T
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
-type Tab = 'marketplace' | 'inference' | 'lab';
+type Tab = 'marketplace' | 'inference' | 'lab' | 'dataset_upload';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab | 'home'>('home');
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
-  const { address, isConnecting, connect, disconnect } = useWeb3();
+  const [selectedLabAddress, setSelectedLabAddress] = useState<string | null>(null);
+  const { address, isConnecting, authError, isRegistrationNeeded, connect, disconnect, register, setIsRegistrationNeeded, role } = useWeb3();
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -28,6 +30,11 @@ export default function App() {
   const handleSelectModel = (model: Model) => {
     setSelectedModel(model);
     setActiveTab('inference');
+  };
+
+  const handleSelectLab = (address: string) => {
+    setSelectedLabAddress(address);
+    setActiveTab('dataset_upload');
   };
 
   const NavItem = ({ id, label }: { id: Tab | 'home'; label: string }) => (
@@ -71,25 +78,90 @@ export default function App() {
           </nav>
 
           <div className="flex items-center gap-2 pl-4 pr-2">
-            {address ? (
+            {address && !isRegistrationNeeded ? (
               <button 
                 onClick={disconnect}
                 className="flex items-center gap-2 px-4 py-1.5 bg-white/5 hover:bg-white/10 rounded-full border border-white/10 transition-all"
               >
                 <div className="w-1.5 h-1.5 rounded-full bg-[var(--status-success)]" />
                 <span className="text-[10px] font-mono">{address.substring(0, 6)}...</span>
+                {role && <span className="ml-2 px-2 py-0.5 rounded-full bg-white/10 text-[9px] uppercase font-bold text-[var(--accent-cyan)]">{role}</span>}
               </button>
             ) : (
               <button 
                 onClick={connect}
-                className="bg-white text-black px-5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest hover:bg-[var(--accent-cyan)] transition-colors"
+                disabled={isConnecting}
+                className="bg-white text-black px-5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest hover:bg-[var(--accent-cyan)] transition-colors disabled:opacity-50"
               >
-                Connect
+                {isConnecting ? 'Connecting...' : 'Connect'}
               </button>
             )}
           </div>
         </motion.header>
       </div>
+
+      {/* Registration Modal */}
+      <AnimatePresence>
+        {isRegistrationNeeded && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-[var(--bg-secondary)] border border-white/10 p-8 rounded-3xl max-w-md w-full shadow-2xl relative"
+            >
+              <button 
+                onClick={() => disconnect()}
+                className="absolute top-4 right-4 text-white/50 hover:text-white"
+              >
+                ✕
+              </button>
+              <div className="flex flex-col items-center mb-8">
+                <div className="w-16 h-16 rounded-full bg-[var(--accent-cyan)]/10 flex items-center justify-center mb-4">
+                  <Lock className="w-8 h-8 text-[var(--accent-cyan)]" />
+                </div>
+                <h2 className="text-2xl font-black tracking-tighter uppercase">New Wallet</h2>
+                <p className="text-sm text-[var(--text-muted)] text-center mt-2">
+                  Please select your role to continue registration.
+                </p>
+              </div>
+
+              {authError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-500 text-sm p-3 rounded-xl mb-6 text-center">
+                  {authError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => register("client")}
+                  disabled={isConnecting}
+                  className="flex flex-col items-center justify-center p-6 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-[var(--accent-cyan)]/30 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+                >
+                  <ShoppingBag className="w-8 h-8 text-white/60 group-hover:text-[var(--accent-cyan)] mb-3 transition-colors" />
+                  <span className="font-bold text-sm">Client</span>
+                  <span className="text-[10px] text-[var(--text-muted)] mt-1">Buy & Run AI</span>
+                </button>
+                
+                <button
+                  onClick={() => register("ai_lab")}
+                  disabled={isConnecting}
+                  className="flex flex-col items-center justify-center p-6 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-purple-500/30 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+                >
+                  <Beaker className="w-8 h-8 text-white/60 group-hover:text-purple-400 mb-3 transition-colors" />
+                  <span className="font-bold text-sm">AI LAB</span>
+                  <span className="text-[10px] text-[var(--text-muted)] mt-1">Deploy Models</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Main Content */}
       <main className="pt-32 pb-24">
@@ -180,7 +252,20 @@ export default function App() {
 
           {activeTab === 'marketplace' && (
             <div className="max-w-7xl mx-auto px-6">
-              <Marketplace onSelectModel={handleSelectModel} />
+              <Marketplace onSelectLab={handleSelectLab} />
+            </div>
+          )}
+
+          {activeTab === 'dataset_upload' && (
+            <div className="max-w-7xl mx-auto px-6">
+              {selectedLabAddress ? (
+                <DatasetUpload labAddress={selectedLabAddress} onBack={() => setActiveTab('marketplace')} />
+              ) : (
+                <div className="flex flex-col items-center justify-center py-24 text-center">
+                  <h2 className="text-2xl font-bold">No AI Lab Selected</h2>
+                  <Button onClick={() => setActiveTab('marketplace')} className="mt-6">Go to Marketplace</Button>
+                </div>
+              )}
             </div>
           )}
 
