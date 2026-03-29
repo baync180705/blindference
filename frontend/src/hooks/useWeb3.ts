@@ -1,4 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import blindInferenceArtifact from '../contracts/abis/BlindInference.json';
+import modelRegistryArtifact from '../contracts/abis/ModelRegistry.json';
+import paymentEscrowArtifact from '../contracts/abis/PaymentEscrow.json';
+
+type ContractArtifact = {
+  abi: unknown[];
+};
+
+const contractArtifacts = {
+  blindInference: blindInferenceArtifact as ContractArtifact,
+  modelRegistry: modelRegistryArtifact as ContractArtifact,
+  paymentEscrow: paymentEscrowArtifact as ContractArtifact,
+};
 
 export function useWeb3() {
   const [address, setAddress] = useState<string | null>(null);
@@ -16,5 +29,16 @@ export function useWeb3() {
     setAddress(null);
   };
 
-  return { address, isConnecting, connect, disconnect };
+  return {
+    address,
+    isConnecting,
+    connect,
+    disconnect,
+    abis: {
+      blindInference: contractArtifacts.blindInference.abi,
+      modelRegistry: contractArtifacts.modelRegistry.abi,
+      paymentEscrow: contractArtifacts.paymentEscrow.abi,
+    },
+    artifacts: contractArtifacts,
+  };
 }
