@@ -1,7 +1,6 @@
-/**
- * Mock FHE Service for BLINFERENCE
- * Simulates Fhenix cofhejs and InferenceEngine.sol behavior
- */
+type FhenixClientLike = {
+  encrypt_uint32(value: number): Promise<{ data: Uint8Array; securityZone: number }>;
+};
 
 export interface Model {
   id: string;
@@ -18,32 +17,38 @@ export const MOCK_MODELS: Model[] = [
 ];
 
 export const sleep = (ms: number) => new globalThis.Promise(resolve => setTimeout(resolve, ms));
+export type EncryptedInferenceInput = Awaited<ReturnType<FhenixClientLike['encrypt_uint32']>>;
 
-export async function encrypt_uint32(value: number): Promise<string> {
-  // Mock encryption: returns a hex-like string representing the encrypted value
-  await sleep(10); // Simulate some work
-  return `0xENC_${value.toString(16).padStart(8, '0')}`;
+export function assertUint32(value: number): number {
+  if (!Number.isFinite(value) || value < 0 || value > 0xffff_ffff) {
+    throw new Error('Inference inputs must be finite uint32 values');
+  }
+  return Math.trunc(value);
 }
 
-export async function mockEncrypt(data: any, onProgress: (msg: string) => void) {
-  onProgress("Initializing local FHE context...");
-  await sleep(800);
-  onProgress("Generating ephemeral public keys...");
-  await sleep(600);
-  onProgress("Encrypting biomarkers locally (AES-GCM + TFHE)...");
-  await sleep(1000);
-  return "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+export async function encryptInferenceInput(
+  client: FhenixClientLike,
+  value: number,
+): Promise<EncryptedInferenceInput> {
+  return client.encrypt_uint32(assertUint32(value));
 }
 
-export async function mockSubmitToChain(ciphertext: string, onProgress: (msg: string) => void) {
-  onProgress("Submitting ciphertext to Fhenix Network...");
-  await sleep(1200);
-  onProgress("Transaction confirmed: 0x82f...91a");
-  await sleep(500);
-  onProgress("Running FHE.mul/add on-chain (Blind Inference)...");
-  await sleep(2000);
-  onProgress("Computation complete. Sealed handle generated.");
-  return "0x" + Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+export async function encrypt_uint32(value: number): Promise<string>;
+export async function encrypt_uint32(
+  client: FhenixClientLike,
+  value: number,
+): Promise<EncryptedInferenceInput>;
+export async function encrypt_uint32(
+  clientOrValue: FhenixClientLike | number,
+  maybeValue?: number,
+): Promise<EncryptedInferenceInput | string> {
+  if (typeof clientOrValue === 'number') {
+    const value = assertUint32(clientOrValue);
+    await sleep(10);
+    return `0xENC_${value.toString(16).padStart(8, '0')}`;
+  }
+
+  return encryptInferenceInput(clientOrValue, maybeValue ?? 0);
 }
 
 export async function mockDecrypt(handle: string) {

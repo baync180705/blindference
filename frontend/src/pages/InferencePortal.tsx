@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef, FormEvent } from 'react';
-import { Model, mockEncrypt, mockSubmitToChain, mockDecrypt } from '../services/fheService';
+import { Model, encryptInferenceInput, mockDecrypt } from '../services/fheService';
 import { Card, Button, Input } from '../components/UI';
 import { motion, AnimatePresence } from 'motion/react';
 import { Shield, Terminal, Lock, Unlock, Activity, CheckCircle2 } from 'lucide-react';
+import { useWeb3 } from '../hooks/useWeb3';
+
+const DEFAULT_REQUEST_ID = BigInt(import.meta.env.VITE_DEFAULT_REQUEST_ID ?? '1');
 
 export default function InferencePortal({ model }: { model: Model }) {
   const [biomarkers, setBiomarkers] = useState({
@@ -13,6 +16,7 @@ export default function InferencePortal({ model }: { model: Model }) {
   const [sealedHandle, setSealedHandle] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const { address, connect, fhenixClient, contracts } = useWeb3();
 
   const addLog = (msg: string) => {
     setLogs(prev => [...prev, `[${new globalThis.Date().toLocaleTimeString()}] ${msg}`]);
@@ -26,16 +30,65 @@ export default function InferencePortal({ model }: { model: Model }) {
     e.preventDefault();
     setStatus('encrypting');
     setLogs([]);
+    setResult(null);
+    setSealedHandle(null);
     addLog(`Initiating blind inference with ${model.name}...`);
     
     try {
-      const ciphertext = await mockEncrypt(biomarkers, addLog);
+      let activeClient = fhenixClient;
+      let activeBlindInference = contracts.blindInference;
+
+      if (!address) {
+        addLog('Wallet not connected. Requesting connection...');
+        const session = await connect();
+        activeClient = session?.fhenixClient ?? activeClient;
+        activeBlindInference = session?.contracts.blindInference ?? activeBlindInference;
+      }
+
+      if (!activeClient) {
+        throw new Error('Fhenix client is not initialized yet');
+      }
+
+      if (!activeBlindInference) {
+        throw new Error('BlindInference contract is not configured');
+      }
+
+      const plaintextInputs = Object.entries(biomarkers).map(([field, rawValue]) => {
+        const parsed = Number(rawValue);
+        if (!Number.isFinite(parsed)) {
+          throw new Error(`Invalid numeric value for ${field}`);
+        }
+        return { field, value: parsed };
+      });
+
+      addLog('Encrypting inference inputs in the browser with Fhenix...');
+      const encryptedInputs = await Promise.all(
+        plaintextInputs.map(async ({ field, value }) => {
+          const encrypted = await encryptInferenceInput(activeClient, value);
+          addLog(`Encrypted ${field} as euint32.`);
+          return encrypted;
+        }),
+      );
+
       setStatus('computing');
-      const handle = await mockSubmitToChain(ciphertext, addLog);
-      setSealedHandle(handle);
+      addLog(`Submitting predict transaction for request ${DEFAULT_REQUEST_ID.toString()}...`);
+      const tx = await activeBlindInference.predict(DEFAULT_REQUEST_ID, encryptedInputs);
+      addLog(`Transaction submitted: ${tx.hash}`);
+      const receipt = await tx.wait();
+      addLog(`Transaction confirmed in block ${receipt.blockNumber}.`);
+
+      try {
+        const resultHandle = await activeBlindInference.getResult(DEFAULT_REQUEST_ID);
+        setSealedHandle(resultHandle.toString());
+        addLog('Encrypted result handle fetched from BlindInference.');
+      } catch (handleError) {
+        setSealedHandle(tx.hash);
+        addLog(`Result handle unavailable immediately, using tx hash reference. ${String(handleError)}`);
+      }
+
       setStatus('sealed');
     } catch (err) {
-      addLog("ERROR: Inference failed.");
+      addLog(`ERROR: ${err instanceof Error ? err.message : 'Inference failed.'}`);
       setStatus('idle');
     }
   };
