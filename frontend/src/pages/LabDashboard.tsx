@@ -61,7 +61,7 @@ export default function LabDashboard() {
       setParsedData(null);
       setPrice('');
       if (fileInputRef.current) fileInputRef.current.value = '';
-      setTimeout(() => setIsSuccess(false), 5000);
+     
     } catch (error) {
       console.error("Registration failed:", error);
     } finally {
