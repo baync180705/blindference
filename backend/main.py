@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import inspect
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -42,6 +43,11 @@ def get_gridfs_bucket(request: Request) -> AsyncIOMotorGridFSBucket:
     if bucket is None:
         raise HTTPException(status_code=503, detail="GridFS storage is not initialized")
     return bucket
+
+
+async def maybe_await(result):
+    if inspect.isawaitable(result):
+        await result
 
 
 @asynccontextmanager
@@ -122,12 +128,12 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
                 break
             await upload_stream.write(chunk)
     except Exception as error:
-        await upload_stream.abort()
+        await maybe_await(upload_stream.abort())
         raise HTTPException(status_code=500, detail=f"failed to stream dataset into GridFS: {error}") from error
     finally:
         await file.close()
 
-    await upload_stream.close()
+    await maybe_await(upload_stream.close())
     return {"file_id": str(upload_stream._id)}
 
 
@@ -153,7 +159,7 @@ async def download_dataset(file_id: str, request: Request):
                     break
                 yield chunk
         finally:
-            await download_stream.close()
+            await maybe_await(download_stream.close())
 
     return StreamingResponse(
         iter_chunks(),

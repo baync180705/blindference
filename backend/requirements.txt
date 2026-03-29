@@ -2,3 +2,5 @@ fastapi
 motor
 python-dotenv
 python-multipart
+uvicorn
+uvicorn
