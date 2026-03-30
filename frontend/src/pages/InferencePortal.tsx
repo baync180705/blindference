@@ -5,6 +5,7 @@ import { Card, Button, Input } from '../components/UI';
 import { motion, AnimatePresence } from 'motion/react';
 import { Shield, Terminal, Lock, Unlock, Activity, CheckCircle2 } from 'lucide-react';
 import { useWeb3 } from '../hooks/useWeb3';
+import { upsertSubmission } from '../services/workspaceService';
 
 const DEFAULT_MODEL_ID = BigInt(import.meta.env.VITE_DEFAULT_MODEL_ID ?? '1');
 
@@ -36,6 +37,8 @@ export default function InferencePortal({ model }: { model: Model }) {
   const logEndRef = useRef<HTMLDivElement>(null);
   const {
     address,
+    role,
+    jwt,
     connect,
     provider,
     fhenixClient,
@@ -144,11 +147,32 @@ export default function InferencePortal({ model }: { model: Model }) {
       addLog(`Inference submitted successfully. Request ID: ${submission.requestId.toString()}`);
       addLog(`Prediction transaction confirmed: ${submission.receipt.hash}`);
 
+      if (jwt && role === 'data_source') {
+        await upsertSubmission(jwt, {
+          request_id: submission.requestId.toString(),
+          model_id: selectedModelId.toString(),
+          lab_address: model.labAddress,
+          tx_hash: submission.receipt.hash,
+          status: 'submitted',
+        });
+      }
+
       const encryptedResult = await activeBlindInference.getResult(submission.requestId);
       const normalizedHandle = encryptedResult.toString();
       setSealedHandle(normalizedHandle);
       addLog('Encrypted score handle fetched from BlindInference.');
       addLog('The result remains sealed until the hospital signs a viewing permit.');
+
+      if (jwt && role === 'data_source') {
+        await upsertSubmission(jwt, {
+          request_id: submission.requestId.toString(),
+          model_id: selectedModelId.toString(),
+          lab_address: model.labAddress,
+          tx_hash: submission.receipt.hash,
+          status: 'sealed',
+          result_handle: normalizedHandle,
+        });
+      }
 
       setStatus('sealed');
     } catch (err) {
@@ -187,6 +211,17 @@ export default function InferencePortal({ model }: { model: Model }) {
       setInferenceResult(decrypted.toString());
       setStatus('complete');
       addLog(`Decryption successful. Plaintext score: ${decrypted.toString()}`);
+
+      if (jwt && role === 'data_source') {
+        await upsertSubmission(jwt, {
+          request_id: requestId,
+          model_id: modelId,
+          lab_address: model.labAddress,
+          status: 'complete',
+          result_handle: normalizedHandle,
+          plaintext_result: decrypted.toString(),
+        });
+      }
     } catch (error) {
       addLog(`ERROR: ${error instanceof Error ? error.message : 'Decryption failed.'}`);
       setStatus('sealed');
@@ -216,7 +251,11 @@ export default function InferencePortal({ model }: { model: Model }) {
           </div>
           <div>
             <h1 className="text-3xl font-bold tracking-tight neon-text">Inference Portal</h1>
-            <p className="text-[var(--text-muted)]">Hospitals approve BFHE spend, encrypt patient features locally, and only the requester can unseal the final score.</p>
+            <p className="text-[var(--text-muted)]">
+              {role === 'ai_lab'
+                ? 'Preview the buyer-side blind inference flow your customers will experience when they submit encrypted inputs.'
+                : 'Data Sources approve BFHE spend, encrypt sensitive features locally, and only the requester can unseal the final score.'}
+            </p>
           </div>
         </div>
 
@@ -283,7 +322,7 @@ export default function InferencePortal({ model }: { model: Model }) {
             <div className="pt-4 flex items-center justify-between border-t border-[var(--bg-secondary)]">
               <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
                 <Lock className="w-3 h-3" />
-                Plaintext never leaves the hospital browser. Approval and inference are signed as separate wallet actions.
+                Plaintext never leaves the data source browser. Approval and inference are signed as separate wallet actions.
               </div>
               <Button type="submit" isLoading={isWorking} disabled={status !== 'idle'}>
                 {actionLabel}

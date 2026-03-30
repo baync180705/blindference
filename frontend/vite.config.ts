@@ -1,13 +1,23 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig, loadEnv} from 'vite';
-import wasm from 'vite-plugin-wasm';
+import {loadEnv} from 'vite';
+import type { ConfigEnv, PluginOption, UserConfig } from 'vite';
 
-export default defineConfig(({mode}) => {
+async function getOptionalWasmPlugin(): Promise<PluginOption[]> {
+  try {
+    const wasm = await import('vite-plugin-wasm');
+    return [wasm.default()];
+  } catch {
+    return [];
+  }
+}
+
+export default async function config({mode}: ConfigEnv): Promise<UserConfig> {
   const env = loadEnv(mode, '.', '');
+  const wasmPlugins = await getOptionalWasmPlugin();
   return {
-    plugins: [react(), wasm(), tailwindcss()],
+    plugins: [react(), ...wasmPlugins, tailwindcss()],
     optimizeDeps: {
       include: ['iframe-shared-storage', 'tweetnacl'],
       exclude: ['@cofhe/sdk', 'tfhe', 'fhenixjs'],
@@ -37,7 +47,7 @@ export default defineConfig(({mode}) => {
     },
     worker: {
       format: 'es',
-      plugins: () => [wasm()],
+      plugins: () => wasmPlugins,
     },
   };
-});
+}

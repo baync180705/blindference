@@ -14,7 +14,7 @@ type RegistryModel = Model & {
 const FALLBACK_MODEL_ID = BigInt(import.meta.env.VITE_DEFAULT_MODEL_ID ?? '1');
 
 export default function Marketplace({ onSelectModel }: { onSelectModel: (model: Model) => void }) {
-  const { address, connect, contracts } = useWeb3();
+  const { address, role, connect, contracts } = useWeb3();
   const [models, setModels] = useState<RegistryModel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +95,11 @@ export default function Marketplace({ onSelectModel }: { onSelectModel: (model: 
         <div className="space-y-4">
           <div className="text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--accent-cyan)]">Registry // v2.0</div>
           <h1 className="text-5xl font-black tracking-tighter uppercase">Model <span className="neon-text">Marketplace</span></h1>
-          <p className="text-[var(--text-muted)] max-w-md">Browse registered AI labs and their encrypted models. Hospitals only pay per inference after approving the ERC-20 toll.</p>
+          <p className="text-[var(--text-muted)] max-w-md">
+            {role === 'ai_lab'
+              ? 'Inspect the live marketplace from the supply side and preview how Data Sources will discover and consume registered encrypted models.'
+              : 'Browse registered AI labs and their encrypted models. Data Sources pay only when they request private inference.'}
+          </p>
         </div>
         <div className="flex gap-4">
           <div className="flex items-center gap-3 px-6 py-3 bg-white/5 rounded-full border border-white/10">
@@ -158,7 +162,7 @@ export default function Marketplace({ onSelectModel }: { onSelectModel: (model: 
                 <div className="text-[10px] font-mono text-white/40 uppercase tracking-widest">{model.labAddress}</div>
                 <div className="text-right">
                   <Button variant="outline" size="sm" onClick={() => onSelectModel(model)}>
-                    Select <ArrowRight className="ml-2 w-3 h-3" />
+                    {role === 'ai_lab' ? 'Preview Flow' : 'Request Inference'} <ArrowRight className="ml-2 w-3 h-3" />
                   </Button>
                 </div>
               </Card>
