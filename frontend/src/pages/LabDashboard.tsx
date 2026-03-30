@@ -1,32 +1,25 @@
-import React, { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatUnits } from 'ethers';
 import { Card, Button, Input } from '../components/UI';
-import { Beaker, DollarSign, Info, CheckCircle, CheckCircle2, Loader2, Shield, ShieldAlert, Sparkles, Wallet } from 'lucide-react';
+import { Beaker, Loader2, Shield, ShieldAlert, Sparkles, Wallet } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useWeb3 } from '../hooks/useWeb3';
-import { createMockDiabetesModel, registerMockModel, toPriceUnits } from '../services/fheService';
 import { getUserProfile } from '../services/profileService';
 import { isIpfsUri } from '../services/ipfsProfileService';
 import { getIncomingDatasets, getIncomingSubmissions, type DatasetManifest, type SubmissionRecord } from '../services/workspaceService';
 
 export default function LabDashboard() {
-  const { address, role, jwt, connect, fhenixClient, ensureFhenixClient, contracts, isInitializingFhe } = useWeb3();
-  const [price, setPrice] = useState('0');
+  const { address, role, jwt, connect, contracts } = useWeb3();
   const [profileURI, setProfileURI] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
   const [isActivatingLab, setIsActivatingLab] = useState(false);
   const [isCheckingLabStatus, setIsCheckingLabStatus] = useState(false);
   const [isLabRegisteredOnChain, setIsLabRegisteredOnChain] = useState(false);
   const [labActivationTxHash, setLabActivationTxHash] = useState<string | null>(null);
-  const [registeredModelId, setRegisteredModelId] = useState<string | null>(null);
-  const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [incomingDatasets, setIncomingDatasets] = useState<DatasetManifest[]>([]);
   const [incomingSubmissions, setIncomingSubmissions] = useState<SubmissionRecord[]>([]);
   const [labModels, setLabModels] = useState<Array<{ modelId: bigint; name: string; fee: bigint; ipfsHash: string }>>([]);
   const [isLoadingOperations, setIsLoadingOperations] = useState(false);
-
-  const mockModel = useMemo(() => createMockDiabetesModel(), []);
 
   useEffect(() => {
     if (!address || !jwt || role !== 'ai_lab') {
@@ -203,7 +196,7 @@ export default function LabDashboard() {
     return () => {
       isActive = false;
     };
-  }, [address, role, contracts.modelRegistry, registeredModelId]);
+  }, [address, role, contracts.modelRegistry]);
 
   if (role !== 'ai_lab') {
     return (
@@ -268,60 +261,6 @@ export default function LabDashboard() {
       );
     } finally {
       setIsActivatingLab(false);
-    }
-  };
-
-  const handleRegister = async (e: FormEvent) => {
-    e.preventDefault();
-    setIsRegistering(true);
-    setRegisteredModelId(null);
-    setTxHash(null);
-    setError(null);
-
-    try {
-      let activeClient = fhenixClient;
-      let activeRegistry = contracts.modelRegistry;
-      let activeAddress = address;
-
-      if (!address) {
-        const session = await connect();
-        activeClient = session?.fhenixClient ?? activeClient;
-        activeRegistry = session?.contracts.modelRegistry ?? activeRegistry;
-        activeAddress = session?.address ?? activeAddress;
-      }
-
-      if (!activeClient) {
-        activeClient = await ensureFhenixClient();
-      }
-
-      if (!activeRegistry) {
-        throw new Error('ModelRegistry contract is not configured');
-      }
-
-      if (!activeAddress) {
-        throw new Error('AI lab wallet is not connected');
-      }
-
-      if (!isLabRegisteredOnChain) {
-        throw new Error('Activate this AI Lab on-chain before registering models.');
-      }
-
-      const { modelId, receipt } = await registerMockModel({
-        client: activeClient,
-        modelRegistry: activeRegistry,
-        pricePerQuery: toPriceUnits(price),
-      });
-
-      setRegisteredModelId(modelId.toString());
-      setTxHash(receipt.hash);
-    } catch (registrationError) {
-      setError(
-        registrationError instanceof Error
-          ? registrationError.message
-          : 'Failed to register encrypted model.',
-      );
-    } finally {
-      setIsRegistering(false);
     }
   };
 
@@ -393,115 +332,61 @@ export default function LabDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="md:col-span-2">
           <Card>
-            <form onSubmit={handleRegister} className="space-y-8">
+            <div className="space-y-8">
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
                   <Shield className="w-4 h-4" />
-                  Mock Logistic Regression Model
+                  AI Lab Publish Flow
                 </div>
 
                 <div className="rounded-2xl border border-white/10 bg-white/[0.01] p-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-lg font-bold">{mockModel.name}</p>
-                      <p className="text-sm text-[var(--text-muted)]">Quantized linear model for diabetes-risk scoring.</p>
-                    </div>
-                    <div className="text-right text-xs font-mono text-[var(--text-muted)]">
-                      <div>SCALE {mockModel.scale}</div>
-                      <div>{mockModel.ipfsHash}</div>
-                    </div>
-                  </div>
+                  <p className="text-lg font-bold">How this lab workspace is used</p>
+                  <p className="text-sm text-[var(--text-muted)]">
+                    Activate your AI lab identity on-chain once, then use the <span className="text-white">Datasets</span> tab to download encrypted datasets and the <span className="text-white">Models</span> tab to upload a weights-and-bias JSON, encrypt it with CoFHE in the browser, and register the resulting model on-chain.
+                  </p>
 
-                  <div className="grid grid-cols-3 gap-4">
-                    {mockModel.features.map((feature, index) => (
-                      <div key={`${feature || 'feature'}-${index}`} className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
-                        <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">{feature}</div>
-                        <div className="mt-2 text-2xl font-black neon-text">{mockModel.weights[index]}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">Bias</div>
-                    <div className="mt-2 text-2xl font-black neon-text">{mockModel.bias}</div>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">1 // Activate</div>
+                      <div className="mt-2 text-sm text-white">Bind this wallet as an AI lab on-chain with your profile URI.</div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">2 // Train</div>
+                      <div className="mt-2 text-sm text-white">Download an encrypted dataset artifact and complete off-chain training.</div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">3 // Publish</div>
+                      <div className="mt-2 text-sm text-white">Publish the trained weights from the Models workspace with pricing and dataset provenance.</div>
+                    </div>
                   </div>
                 </div>
               </div>
 
               <div className="space-y-4 pt-6 border-t border-white/5">
                 <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
-                  <DollarSign className="w-4 h-4" />
-                  Marketplace Configuration
+                  <Sparkles className="w-4 h-4" />
+                  Profile URI
                 </div>
                 <div className="max-w-xl rounded-3xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white/75 break-all">
                   {profileURI || 'No IPFS profile URI yet. Save your profile in the Profile workspace first.'}
                 </div>
-                <div className="max-w-xs">
-                  <Input
-                    label="Query Price (FHERC20)"
-                    type="number"
-                    step="0.1"
-                    placeholder="0.0"
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    required
-                  />
+                <div className="text-xs text-[var(--text-muted)]">
+                  This URI is only used for the one-time on-chain lab activation step above. The actual model publish flow now lives in the Models tab.
                 </div>
               </div>
-
-              <div className="pt-4 flex items-center justify-between">
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-                    <Info className="w-3 h-3" />
-                    The lab encrypts weights with the Fhenix network public key before registration.
-                  </div>
-                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
-                    Features: {mockModel.features.join(' / ')}
-                  </div>
-                </div>
-                <Button type="submit" isLoading={isRegistering || isInitializingFhe} disabled={!isLabRegisteredOnChain}>
-                  {isRegistering
-                    ? 'Encrypting & Registering...'
-                    : isInitializingFhe
-                      ? 'Initializing FHE...'
-                      : isLabRegisteredOnChain
-                        ? 'Register Mock Model'
-                        : 'Activate Lab First'}
-                </Button>
-              </div>
-            </form>
+            </div>
           </Card>
         </div>
 
         <div className="space-y-6">
           <Card className="bg-[var(--bg-secondary)]/30 border-dashed">
-            <h3 className="text-xs font-bold uppercase tracking-widest mb-4 text-[var(--text-muted)]">Quantization Guide</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest mb-4 text-[var(--text-muted)]">Publish Guide</h3>
             <div className="space-y-4 text-xs text-[var(--text-muted)] leading-relaxed">
-              <p>Weights and bias are scaled by 1000, then encrypted as `euint32` inputs before the lab submits them on-chain.</p>
-              <div className="p-3 bg-[var(--bg-secondary)] rounded border border-[var(--bg-secondary)] font-mono">
-                score = 150*Glucose + 210*BMI + 55*Age + 500
-              </div>
-              <p>Because the contract stores encrypted handles, neither the hospital nor the public chain can read the raw model parameters.</p>
+              <p>Model JSONs should carry quantized unsigned integer `weights` and `bias` values that fit into `uint32`.</p>
+              <p>The browser encrypts those parameters with CoFHE before calling `ModelRegistry.registerModel(...)`.</p>
+              <p>After the tx succeeds, the backend records the dataset linkage and on-chain model id for provenance.</p>
             </div>
           </Card>
-
-          <AnimatePresence>
-            {registeredModelId && (
-              <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex items-start gap-3"
-              >
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                <div>
-                  <div className="text-sm font-bold text-emerald-500">Registration Success</div>
-                  <div className="text-[10px] text-emerald-500/70">Model ID {registeredModelId}</div>
-                  {txHash && <div className="text-[10px] break-all text-emerald-500/70">{txHash}</div>}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
 
           <AnimatePresence>
             {error && (
@@ -513,7 +398,7 @@ export default function LabDashboard() {
               >
                 <div className="flex items-center gap-2 text-sm font-bold text-rose-300">
                   <Loader2 className="w-4 h-4" />
-                  Registration Failed
+                  Lab Activation Failed
                 </div>
                 <div className="mt-2 text-[10px] text-rose-200/80">{error}</div>
               </motion.div>
