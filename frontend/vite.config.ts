@@ -17,6 +17,10 @@ export default defineConfig(({mode}) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        'fhenixjs-access-control': path.resolve(
+          __dirname,
+          'node_modules/fhenixjs/lib/commonjs/extensions/access_control/index.js',
+        ),
       },
     },
     server: {

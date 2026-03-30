@@ -20,6 +20,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "fhenixjs-access-control": [
+        "./node_modules/fhenixjs/lib/commonjs/extensions/access_control/index.js"
       ]
     },
     "allowImportingTsExtensions": true,

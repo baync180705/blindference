@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, FormEvent } from 'react';
 import { formatUnits } from 'ethers';
-import { Model, decryptInferenceResult, ensureSelfPermit, submitInference } from '../services/fheService';
+import { Model, submitInference, unsealInferenceResult } from '../services/fheService';
 import { Card, Button, Input } from '../components/UI';
 import { motion, AnimatePresence } from 'motion/react';
 import { Shield, Terminal, Lock, Unlock, Activity, CheckCircle2 } from 'lucide-react';
@@ -30,12 +30,14 @@ export default function InferencePortal({ model }: { model: Model }) {
   const [status, setStatus] = useState<PortalStatus>('idle');
   const [requestId, setRequestId] = useState<string | null>(null);
   const [sealedHandle, setSealedHandle] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
+  const [inferenceResult, setInferenceResult] = useState<string | null>(null);
+  const [isDecrypting, setIsDecrypting] = useState(false);
   const [inferenceFee, setInferenceFee] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
   const {
     address,
     connect,
+    provider,
     fhenixClient,
     contracts,
     paymentTokenAddress,
@@ -57,7 +59,7 @@ export default function InferencePortal({ model }: { model: Model }) {
   const handleInference = async (e: FormEvent) => {
     e.preventDefault();
     setLogs([]);
-    setResult(null);
+    setInferenceResult(null);
     setSealedHandle(null);
     setRequestId(null);
     setInferenceFee(null);
@@ -154,25 +156,40 @@ export default function InferencePortal({ model }: { model: Model }) {
   };
 
   const handleDecrypt = async () => {
-    if (!fhenixClient || !sealedHandle || !address) {
+    if (!fhenixClient || !provider || !requestId) {
       addLog('ERROR: Connect a wallet and run an inference before decrypting.');
       setStatus('sealed');
       return;
     }
 
     setStatus('decrypting');
+    setIsDecrypting(true);
     addLog('Prompting wallet for an EIP-712 permit to unseal the result...');
 
     try {
-      await ensureSelfPermit(fhenixClient, address as `0x${string}`);
+      if (!contracts.inferenceEngine || !inferenceEngineAddress) {
+        throw new Error('Inference engine contract is not configured');
+      }
+
+      const encryptedResult = await contracts.inferenceEngine.getResult(BigInt(requestId));
+      const normalizedHandle = encryptedResult.toString();
+      setSealedHandle(normalizedHandle);
+      addLog(`Encrypted result handle fetched for request ${requestId}.`);
       addLog('Permit ready. Requesting plaintext from the Fhenix threshold network...');
-      const decrypted = await decryptInferenceResult(fhenixClient, sealedHandle);
-      setResult(decrypted.toString());
+      const decrypted = await unsealInferenceResult(
+        fhenixClient,
+        provider,
+        inferenceEngineAddress,
+        encryptedResult,
+      );
+      setInferenceResult(decrypted.toString());
       setStatus('complete');
       addLog(`Decryption successful. Plaintext score: ${decrypted.toString()}`);
     } catch (error) {
       addLog(`ERROR: ${error instanceof Error ? error.message : 'Decryption failed.'}`);
       setStatus('sealed');
+    } finally {
+      setIsDecrypting(false);
     }
   };
 
@@ -305,7 +322,7 @@ export default function InferencePortal({ model }: { model: Model }) {
             </motion.div>
           )}
 
-          {(sealedHandle || result) && (
+          {(sealedHandle || inferenceResult || requestId) && (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -322,20 +339,22 @@ export default function InferencePortal({ model }: { model: Model }) {
                   </div>
                 </div>
 
-                {!result ? (
+                {!inferenceResult ? (
                   <div className="flex flex-col items-center py-6 space-y-4">
-                    <div className="p-4 bg-[var(--bg-secondary)] rounded-lg border border-slate-800 w-full font-mono text-xs break-all text-[var(--text-muted)]">
-                      {sealedHandle}
-                    </div>
-                    <Button variant="outline" onClick={handleDecrypt} isLoading={status === 'decrypting'}>
+                    {sealedHandle && (
+                      <div className="p-4 bg-[var(--bg-secondary)] rounded-lg border border-slate-800 w-full font-mono text-xs break-all text-[var(--text-muted)]">
+                        {sealedHandle}
+                      </div>
+                    )}
+                    <Button variant="outline" onClick={handleDecrypt} isLoading={isDecrypting}>
                       <Unlock className="w-4 h-4 mr-2" />
-                      Sign Permit & Unseal Score
+                      {isDecrypting ? 'Decrypting Result...' : 'Decrypt Result'}
                     </Button>
                   </div>
                 ) : (
                   <div className="text-center py-8 space-y-2">
                     <div className="text-sm uppercase tracking-widest text-[var(--text-muted)] font-bold">Plaintext Logistic Regression Score</div>
-                    <div className="text-4xl font-black neon-text uppercase tracking-tighter">{result}</div>
+                    <div className="text-4xl font-black neon-text uppercase tracking-tighter">{inferenceResult}</div>
                   </div>
                 )}
               </Card>

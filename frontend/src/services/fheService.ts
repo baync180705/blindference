@@ -1,5 +1,7 @@
 import { Encryptable, FheTypes, type CofheClient, type EncryptedUint32Input } from '@cofhe/sdk';
-import type { Contract, ContractTransactionReceipt } from 'ethers';
+import { getPermit } from 'fhenixjs-access-control';
+import type { FhenixClient } from 'fhenixjs';
+import type { BrowserProvider, Contract, ContractTransactionReceipt } from 'ethers';
 import { parseUnits } from 'ethers';
 
 export interface Model {
@@ -93,6 +95,29 @@ export async function ensureSelfPermit(client: CofheClient, issuer: `0x${string}
 
 export async function decryptInferenceResult(client: CofheClient, handle: bigint | string): Promise<bigint> {
   return client.decryptForView(handle, FheTypes.Uint32).execute();
+}
+
+export async function unsealInferenceResult(
+  client: FhenixClient | CofheClient,
+  provider: BrowserProvider,
+  contractAddress: string,
+  encryptedResult: bigint | string,
+): Promise<bigint> {
+  await getPermit(contractAddress, provider);
+
+  if ('unseal' in client && typeof client.unseal === 'function') {
+    const signer = await provider.getSigner();
+    const account = await signer.getAddress();
+    const normalizedCiphertext =
+      typeof encryptedResult === 'string' ? encryptedResult : encryptedResult.toString();
+    return client.unseal(contractAddress, normalizedCiphertext, account);
+  }
+
+  if ('decryptForView' in client && typeof client.decryptForView === 'function') {
+    return client.decryptForView(encryptedResult, FheTypes.Uint32).execute();
+  }
+
+  throw new Error('Connected FHE client does not support result unsealing');
 }
 
 export function toPriceUnits(price: string): bigint {
