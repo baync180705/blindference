@@ -4,19 +4,34 @@ import { Model } from './services/fheService';
 import Marketplace from './pages/Marketplace';
 import InferencePortal from './pages/InferencePortal';
 import LabDashboard from './pages/LabDashboard';
+import ProfileWorkspace from './pages/ProfileWorkspace';
+import DataSourceWorkspace from './pages/DataSourceWorkspace';
 import { Button } from './components/UI';
 import { CursorEffect } from './components/CursorEffect';
 import { LayeredStack } from './components/LayeredStack';
-import { Shield, LayoutDashboard, ShoppingBag, Beaker, Wallet, LogOut, Github, Twitter, MessageSquare, ArrowRight, Cpu, Lock } from 'lucide-react';
+import { Shield, Database, ShoppingBag, Beaker, Github, Twitter, MessageSquare, ArrowRight, Cpu, Lock } from 'lucide-react';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { AppRole, ROLE_DEFINITIONS } from './lib/roles';
 
-type Tab = 'marketplace' | 'inference' | 'lab';
+type Tab = 'marketplace' | 'inference' | 'lab' | 'profile' | 'source';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab | 'home'>('home');
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
-  const { address, isConnecting, connect, disconnect, connectionError } = useWeb3();
+  const {
+    address,
+    role,
+    jwt,
+    isConnecting,
+    connect,
+    disconnect,
+    connectionError,
+    isAuthenticating,
+    isRoleSelectionOpen,
+    selectRole,
+    dismissRoleSelection,
+  } = useWeb3();
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -30,6 +45,16 @@ export default function App() {
     setActiveTab('inference');
   };
 
+  useEffect(() => {
+    if (role !== 'ai_lab' && activeTab === 'lab') {
+      setActiveTab('home');
+    }
+
+    if (role !== 'data_source' && activeTab === 'source') {
+      setActiveTab('home');
+    }
+  }, [role, activeTab]);
+
   const handleConnectWallet = async () => {
     try {
       await connect();
@@ -37,6 +62,27 @@ export default function App() {
       console.error('Wallet connection failed:', error);
     }
   };
+
+  const handleChooseRole = async (nextRole: AppRole) => {
+    try {
+      await selectRole(nextRole);
+      setActiveTab('profile');
+    } catch (error) {
+      console.error('Role selection failed:', error);
+    }
+  };
+
+  const primaryCta = role === 'ai_lab'
+    ? { label: 'Open Lab Dashboard', action: () => setActiveTab('lab') }
+    : role === 'data_source'
+      ? { label: 'Open Source Workspace', action: () => setActiveTab('source') }
+      : { label: 'Choose Your Role', action: () => void handleConnectWallet() };
+
+  const secondaryCta = role === 'ai_lab'
+    ? { label: 'Edit Profile', action: () => setActiveTab('profile') }
+    : role === 'data_source'
+      ? { label: 'Explore AI Labs', action: () => setActiveTab('marketplace') }
+      : { label: 'AI Lab Workspace', action: () => setActiveTab('lab') };
 
   const NavItem = ({ id, label }: { id: Tab | 'home'; label: string }) => (
     <button
@@ -73,9 +119,11 @@ export default function App() {
 
           <nav className="flex items-center gap-1">
             <NavItem id="home" label="Home" />
+            {role && <NavItem id="profile" label="Profile" />}
             <NavItem id="marketplace" label="Market" />
+            {role === 'data_source' && <NavItem id="source" label="Source" />}
             <NavItem id="inference" label="Portal" />
-            <NavItem id="lab" label="Lab" />
+            {role === 'ai_lab' && <NavItem id="lab" label="Lab" />}
           </nav>
 
           <div className="flex items-center gap-2 pl-4 pr-2">
@@ -86,6 +134,16 @@ export default function App() {
               >
                 <div className="w-1.5 h-1.5 rounded-full bg-[var(--status-success)]" />
                 <span className="text-[10px] font-mono">{address.substring(0, 6)}...</span>
+                {role && (
+                  <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
+                    {ROLE_DEFINITIONS[role].badge}
+                  </span>
+                )}
+                {jwt && (
+                  <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-emerald-300">
+                    AUTH
+                  </span>
+                )}
               </button>
             ) : (
               <button 
@@ -106,6 +164,99 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <AnimatePresence>
+        {isRoleSelectionOpen && address && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 px-6 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 24, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 24, scale: 0.96 }}
+              className="w-full max-w-5xl rounded-[2rem] border border-white/10 bg-[var(--bg-secondary)]/95 p-8 shadow-2xl"
+            >
+              <div className="mb-8 flex items-start justify-between gap-6">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.35em] text-[var(--accent-cyan)]">
+                    Phase 1 Onboarding
+                  </div>
+                  <h2 className="mt-3 text-4xl font-black uppercase tracking-tight">
+                    Choose Your Role
+                  </h2>
+                  <p className="mt-3 max-w-2xl text-sm text-[var(--text-muted)]">
+                    This choice is mapped to your connected wallet in the app shell for Wave 1. Data Sources bring private inputs and request inference. AI Labs register encrypted models and manage supply-side workflows.
+                  </p>
+                  <p className="mt-3 text-xs font-mono text-white/40">
+                    Wallet: {address}
+                  </p>
+                </div>
+                <button
+                  onClick={dismissRoleSelection}
+                  disabled={isAuthenticating}
+                  className="rounded-full border border-white/10 px-3 py-2 text-xs uppercase tracking-widest text-white/50 transition-colors hover:text-white"
+                >
+                  Later
+                </button>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                {(Object.entries(ROLE_DEFINITIONS) as [AppRole, typeof ROLE_DEFINITIONS[AppRole]][]).map(
+                  ([key, roleDef]) => (
+                    <button
+                      key={key}
+                      onClick={() => void handleChooseRole(key)}
+                      disabled={isAuthenticating}
+                      className="group rounded-[1.75rem] border border-white/10 bg-white/[0.02] p-8 text-left transition-all hover:border-[var(--accent-cyan)]/40 hover:bg-white/[0.04] disabled:cursor-wait disabled:opacity-60"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-[10px] font-bold uppercase tracking-[0.35em] text-[var(--accent-cyan)]">
+                            {roleDef.badge}
+                          </div>
+                          <h3 className="mt-3 text-3xl font-black uppercase tracking-tight">
+                            {roleDef.label}
+                          </h3>
+                          <p className="mt-3 text-sm text-[var(--text-main)]">
+                            {roleDef.tagline}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-[var(--accent-cyan)] transition-transform group-hover:scale-110">
+                          {key === 'ai_lab' ? <Beaker className="h-7 w-7" /> : <Database className="h-7 w-7" />}
+                        </div>
+                      </div>
+
+                      <p className="mt-6 max-w-xl text-sm leading-relaxed text-[var(--text-muted)]">
+                        {roleDef.summary}
+                      </p>
+
+                      <div className="mt-6 space-y-2">
+                        {roleDef.capabilities.map((capability) => (
+                          <div
+                            key={capability}
+                            className="flex items-center gap-3 text-xs uppercase tracking-widest text-white/55"
+                          >
+                            <div className="h-1.5 w-1.5 rounded-full bg-[var(--accent-cyan)]" />
+                            <span>{capability}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-8 inline-flex items-center text-sm font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
+                        {isAuthenticating ? 'Requesting Wallet Signature' : `Continue as ${roleDef.label}`}
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </div>
+                    </button>
+                  ),
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Main Content */}
       <main className="pt-32 pb-24">
@@ -128,12 +279,12 @@ export default function App() {
                   >
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/20 text-[var(--accent-cyan)] text-[10px] font-bold uppercase tracking-[0.2em] mb-6">
                       <div className="w-1 h-1 rounded-full bg-[var(--accent-cyan)] animate-ping" />
-                      FHE-Powered Blind Inference
+                      {role ? `${ROLE_DEFINITIONS[role].label} Workspace` : 'FHE-Powered Blind Inference'}
                     </div>
                     <h1 className="text-7xl font-black tracking-tighter leading-[0.9] uppercase">
-                      The Largest <br />
-                      <span className="neon-text">Blind AI</span> <br />
-                      Marketplace
+                      Private AI <br />
+                      For <span className="neon-text">{role === 'ai_lab' ? 'Model Builders' : role === 'data_source' ? 'Data Sources' : 'Two Clear Roles'}</span> <br />
+                      On Fhenix
                     </h1>
                   </motion.div>
                   
@@ -143,7 +294,9 @@ export default function App() {
                     transition={{ delay: 0.3 }}
                     className="text-xl text-[var(--text-muted)] max-w-lg leading-relaxed"
                   >
-                    Run machine learning models on encrypted data without ever revealing the plaintext. Secure, private, and decentralized.
+                    {role
+                      ? ROLE_DEFINITIONS[role].summary
+                      : 'Connect a wallet, choose whether you are a Data Source or an AI Lab, and enter a role-aware confidential AI workflow without exposing plaintext data.'}
                   </motion.p>
 
                   <motion.div 
@@ -152,11 +305,11 @@ export default function App() {
                     transition={{ delay: 0.4 }}
                     className="flex gap-4"
                   >
-                    <Button size="lg" onClick={() => setActiveTab('marketplace')}>
-                      Explore Models <ArrowRight className="ml-2 w-4 h-4" />
+                    <Button size="lg" onClick={primaryCta.action}>
+                      {primaryCta.label} <ArrowRight className="ml-2 w-4 h-4" />
                     </Button>
-                    <Button variant="secondary" size="lg" onClick={() => setActiveTab('lab')}>
-                      Lab Dashboard
+                    <Button variant="secondary" size="lg" onClick={secondaryCta.action}>
+                      {secondaryCta.label}
                     </Button>
                   </motion.div>
                 </div>
@@ -173,9 +326,9 @@ export default function App() {
               {/* Feature Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-32">
                 {[
-                  { title: 'Privacy First', desc: 'TFHE primitives ensure data remains encrypted throughout the entire compute lifecycle.', icon: Lock },
-                  { title: 'Verifiable', desc: 'Every inference step is logged on the Fhenix ledger, providing a tamper-proof audit trail.', icon: Shield },
-                  { title: 'Scalable', desc: 'Optimized for high-throughput blind inference across distributed compute nodes.', icon: Cpu },
+                  { title: 'Data Sources', desc: 'Upload protected inputs and request confidential compute without exposing raw records to model providers.', icon: Database },
+                  { title: 'AI Labs', desc: 'Register encrypted models, price inference, and operate the supply side of the confidential AI marketplace.', icon: Beaker },
+                  { title: 'Shared FHE Rail', desc: 'Both roles use the same Fhenix-powered privacy rail for encrypted inputs, pricing, execution, and selective decryption.', icon: Shield },
                 ].map((f, i) => (
                   <motion.div
                     key={i}
@@ -197,6 +350,18 @@ export default function App() {
           {activeTab === 'marketplace' && (
             <div className="max-w-7xl mx-auto px-6">
               <Marketplace onSelectModel={handleSelectModel} />
+            </div>
+          )}
+
+          {activeTab === 'profile' && (
+            <div className="max-w-7xl mx-auto px-6">
+              <ProfileWorkspace />
+            </div>
+          )}
+
+          {activeTab === 'source' && (
+            <div className="max-w-7xl mx-auto px-6">
+              <DataSourceWorkspace selectedModel={selectedModel} />
             </div>
           )}
 

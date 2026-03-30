@@ -1,15 +1,37 @@
 # Blindference
 
-`blindference` is the private application repository for the product layer of the system.
+`blindference` is the application and orchestration layer for the Blindference buildathon submission.
 
-This repo owns:
+It owns:
 
 - Fhenix/CoFHE smart contracts and deployment scripts
-- the FastAPI backend used as the off-chain routing layer
-- the React frontend for AI labs, hospitals, and marketplace users
-- wallet, permit, encryption, and decryption UX
+- the FastAPI metadata/orchestration backend
+- the React frontend for role-aware product flows
+- wallet authentication, permits, encryption, and decryption UX
 
-The off-chain Rust encrypted ML engine lives separately in the `PPML` repository.
+The off-chain encrypted ML engine lives separately in [`PPML`](/home/budhayan/Documents/hackathon/fenix-hackathon/PPML).
+
+## Role Model
+
+Blindference now has two explicit product roles:
+
+- `data_source`
+  - uploads encrypted datasets or private inputs
+  - requests blind inference
+  - tracks results and request metadata
+- `ai_lab`
+  - manages app-layer profile metadata
+  - activates its lab identity on-chain through `ModelRegistry`
+  - registers encrypted models and operates the supply side
+
+### Source of truth
+
+- Wallet address: user identity
+- Signed wallet authentication: backend session / JWT issuance
+- `ModelRegistry.registerLab(...)`: canonical AI Lab activation
+- MongoDB: metadata, orchestration, profiles, dataset manifests, submission tracking
+
+MongoDB is intentionally **not** the authority for AI Lab identity. It stores application metadata and operational records only.
 
 ## Repository layout
 
@@ -36,18 +58,22 @@ Use this directory for:
 
 Use this directory for:
 
-- dataset upload/download routing
+- signed wallet auth
+- profile metadata
 - MongoDB / GridFS integration
+- dataset manifest tracking
+- inference submission tracking
 - bridging the frontend to off-chain model export status
 
 ### `frontend/`
 
 Use this directory for:
 
-- wallet connect
+- wallet connect + signature auth
+- role-aware onboarding and navigation
 - CoFHE/Fhenix browser encryption
-- AI lab model registration
-- hospital inference submission
+- AI Lab activation and model registration
+- Data Source dataset upload and request tracking
 - permit-based result decryption
 
 ## Environment files
@@ -122,6 +148,7 @@ Example:
 
 ```env
 MONGO_URI=mongodb://localhost:27017
+JWT_SECRET=replace-me-in-non-demo-environments
 ```
 
 If you are using MongoDB Atlas, use the full Atlas connection string instead.
@@ -216,38 +243,82 @@ Make sure:
 
 ## End-to-end usage flow
 
-### AI Lab flow
+### 1. Onboarding
 
 1. Open the frontend
-2. Connect MetaMask with the AI lab account
-3. Go to `Lab`
-4. Register the AI lab profile if prompted
+2. Connect MetaMask on Sepolia
+3. Choose one role:
+   - `Data Source`
+   - `AI Lab`
+4. Sign the backend authentication message
+5. Land in the role-specific workspace
+
+What happens:
+
+- the backend creates a short-lived nonce
+- the wallet signs a deterministic Blindference auth message
+- the backend verifies the signature and issues a JWT
+- the role is tied to the connected wallet for the app shell
+
+### 2. AI Lab flow
+
+1. Connect with the AI Lab wallet
+2. Open `Profile` and complete the app-layer profile
+3. Open `Lab`
+4. Activate the AI Lab on-chain through `ModelRegistry.registerLab(profileURI)`
 5. Register the encrypted model
 
 What happens:
 
-- the browser encrypts model weights and bias with the Fhenix/CoFHE client
-- the encrypted model is registered on-chain
-- the model gets a `modelId`
+- the profile metadata is stored off-chain in Mongo
+- the AI Lab authority is activated on-chain
+- the browser encrypts model weights and bias with CoFHE
+- the encrypted model is registered on-chain and receives a `modelId`
 
-### Hospital flow
+### 3. Data Source flow
 
-1. Switch MetaMask to a different hospital account
-2. Open `Market` to view available models
-3. Open `Portal`
-4. Choose the model id
-5. Enter patient inputs
-6. Approve BFHE token spend if needed
+1. Connect with a different Data Source wallet
+2. Open `Profile` and complete the app-layer profile
+3. Open `Source` to upload encrypted dataset artifacts
+4. Open `Market` to browse registered models
+5. Open `Portal` to request blind inference
+6. Approve BFHE if needed
 7. Submit inference
-8. Click `Decrypt Result`
-9. Sign the permit request
+8. Decrypt the result with a permit
 
 What happens:
 
-- the hospital browser encrypts the patient datapoint locally
+- dataset artifacts are uploaded to GridFS
+- Mongo stores only manifest/orchestration metadata for those uploads
+- the browser encrypts the private inference inputs locally
 - the contract computes over encrypted inputs and encrypted weights
 - the result handle is ACL-granted to the requesting wallet
-- the hospital signs a permit and decrypts the score off-chain in the UI
+- the Data Source signs a permit and decrypts the score off-chain in the UI
+- Mongo stores submission tracking metadata, not the protocol authority
+
+## Architecture notes
+
+### On-chain authority
+
+- AI Lab activation
+- model registry state
+- inference pricing
+- encrypted inference execution
+
+### Off-chain metadata / orchestration
+
+- JWT-backed session metadata
+- wallet-bound user profiles
+- dataset manifests
+- submission tracking records
+- GridFS file storage
+- PPML export status
+
+### PPML relationship
+
+- `PPML` trains and exports encrypted model artifacts
+- `blindference` handles user roles, product UX, contracts, wallet flows, and metadata orchestration
+- current integration is strongest at the product/orchestration boundary; direct PPML artifact ingestion can be expanded later
 
 ## Frontend ABI source
 
@@ -258,6 +329,10 @@ The frontend imports contract artifacts directly from:
 There is no separate cross-repo ABI export step anymore.
 
 ## Troubleshooting
+
+### TypeScript module resolution
+
+This branch includes ambient declarations for several Fhenix/CoFHE modules to keep local type-checking unblocked in environments where those package declarations are incomplete. Runtime still depends on the corresponding packages being installed.
 
 ### Wallet connects but FHE client fails
 

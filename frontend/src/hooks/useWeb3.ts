@@ -6,6 +6,7 @@ import inferenceEngineArtifact from '../../../fhenix_inference/artifacts/contrac
 import modelRegistryArtifact from '../../../fhenix_inference/artifacts/contracts/ModelRegistry.sol/ModelRegistry.json';
 import paymentEscrowArtifact from '../../../fhenix_inference/artifacts/contracts/PaymentEscrow.sol/PaymentEscrow.json';
 import paymentTokenArtifact from '../contracts/abis/MockERC20.json';
+import { AppRole, isAppRole } from '../lib/roles';
 
 declare global {
   interface Window {
@@ -29,6 +30,8 @@ type Web3Contracts = {
 
 type Web3ContextValue = {
   address: string | null;
+  role: AppRole | null;
+  jwt: string | null;
   provider: BrowserProvider | null;
   signer: JsonRpcSigner | null;
   fhenixClient: CofheClient | null;
@@ -38,6 +41,8 @@ type Web3ContextValue = {
   inferenceEngineAddress: string | null;
   isConnecting: boolean;
   isInitializingFhe: boolean;
+  isAuthenticating: boolean;
+  isRoleSelectionOpen: boolean;
   connect: () => Promise<{
     address: string | null;
     provider: BrowserProvider;
@@ -46,6 +51,8 @@ type Web3ContextValue = {
     contracts: Web3Contracts;
   }>;
   ensureFhenixClient: () => Promise<CofheClient>;
+  selectRole: (role: AppRole) => Promise<void>;
+  dismissRoleSelection: () => void;
   disconnect: () => void;
   abis: {
     blindInference: unknown[];
@@ -83,6 +90,60 @@ const defaultContracts: Web3Contracts = {
 const Web3Context = createContext<Web3ContextValue | null>(null);
 const SEPOLIA_CHAIN_ID = 11155111n;
 const SEPOLIA_CHAIN_ID_HEX = '0xaa36a7';
+const ROLE_STORAGE_PREFIX = 'blindference.role';
+const TOKEN_STORAGE_PREFIX = 'blindference.token';
+const BACKEND_BASE_URL = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? 'http://127.0.0.1:8000';
+
+function normalizeAddress(address: string) {
+  return address.toLowerCase();
+}
+
+function roleStorageKey(address: string) {
+  return `${ROLE_STORAGE_PREFIX}:${normalizeAddress(address)}`;
+}
+
+function tokenStorageKey(address: string) {
+  return `${TOKEN_STORAGE_PREFIX}:${normalizeAddress(address)}`;
+}
+
+function getStoredRole(address: string | null): AppRole | null {
+  if (!address) {
+    return null;
+  }
+
+  const stored = localStorage.getItem(roleStorageKey(address));
+  return isAppRole(stored) ? stored : null;
+}
+
+function persistRole(address: string, role: AppRole) {
+  localStorage.setItem(roleStorageKey(address), role);
+}
+
+function getStoredToken(address: string | null): string | null {
+  if (!address) {
+    return null;
+  }
+
+  return localStorage.getItem(tokenStorageKey(address));
+}
+
+function persistToken(address: string, token: string) {
+  localStorage.setItem(tokenStorageKey(address), token);
+}
+
+function clearStoredToken(address: string | null) {
+  if (!address) {
+    return;
+  }
+
+  localStorage.removeItem(tokenStorageKey(address));
+}
+
+type VerifyResponse = {
+  access_token: string;
+  token_type: string;
+  role: AppRole;
+};
 
 async function ensureSepoliaNetwork(provider: BrowserProvider) {
   const network = await provider.getNetwork();
@@ -125,6 +186,10 @@ async function createFhenixClient(provider: BrowserProvider, signer: JsonRpcSign
 
   const config = createCofheConfig({
     supportedChains: [chains.sepolia],
+    // Disable the SDK's iframe-backed IndexedDB cache. In our local/Vite setup
+    // the cross-origin storage hub may fail to initialize, which breaks client
+    // startup while rehydrating the persisted FHE keys store.
+    fheKeyStorage: null,
   });
   const client = createCofheClient(config);
   const { publicClient, walletClient } = await Ethers6Adapter(provider, signer);
@@ -155,6 +220,8 @@ function buildContracts(signer: JsonRpcSigner): Web3Contracts {
 
 export function Web3Provider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
+  const [role, setRole] = useState<AppRole | null>(null);
+  const [jwt, setJwt] = useState<string | null>(null);
   const [provider, setProvider] = useState<BrowserProvider | null>(null);
   const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
   const [fhenixClient, setFhenixClient] = useState<CofheClient | null>(null);
@@ -162,6 +229,70 @@ export function Web3Provider({ children }: { children: ReactNode }) {
   const [contracts, setContracts] = useState<Web3Contracts>(defaultContracts);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isInitializingFhe, setIsInitializingFhe] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [isRoleSelectionOpen, setIsRoleSelectionOpen] = useState(false);
+
+  async function authenticateWallet(
+    nextAddress: string,
+    nextSigner: JsonRpcSigner,
+    nextRole: AppRole,
+  ): Promise<VerifyResponse> {
+    setIsAuthenticating(true);
+    setConnectionError(null);
+
+    try {
+      const nonceResponse = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/nonce`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: normalizeAddress(nextAddress),
+          role: nextRole,
+        }),
+      });
+
+      if (!nonceResponse.ok) {
+        const errorPayload = await nonceResponse.text();
+        throw new Error(errorPayload || 'Failed to request authentication nonce');
+      }
+
+      const noncePayload = (await nonceResponse.json()) as {
+        nonce_id: string;
+        message: string;
+      };
+
+      const signature = await nextSigner.signMessage(noncePayload.message);
+
+      const verifyResponse = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: normalizeAddress(nextAddress),
+          role: nextRole,
+          nonce_id: noncePayload.nonce_id,
+          signature,
+        }),
+      });
+
+      if (!verifyResponse.ok) {
+        const errorPayload = await verifyResponse.text();
+        throw new Error(errorPayload || 'Failed to verify wallet signature');
+      }
+
+      const verified = (await verifyResponse.json()) as VerifyResponse;
+      persistToken(nextAddress, verified.access_token);
+      setJwt(verified.access_token);
+      setRole(verified.role);
+      setIsRoleSelectionOpen(false);
+      return verified;
+    } catch (error) {
+      clearStoredToken(nextAddress);
+      setJwt(null);
+      setConnectionError(error instanceof Error ? error.message : 'Wallet authentication failed.');
+      throw error;
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
 
   async function initializeFhenixClient(nextProvider: BrowserProvider, nextSigner: JsonRpcSigner) {
     setIsInitializingFhe(true);
@@ -201,12 +332,17 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       await ensureSepoliaNetwork(nextProvider);
       nextProvider = new BrowserProvider(window.ethereum);
       const nextSigner = await nextProvider.getSigner();
+      const nextAddress = accounts[0];
+      const nextRole = getStoredRole(nextAddress);
 
       if (!isActive) {
         return;
       }
 
-      setAddress(accounts[0]);
+      setAddress(nextAddress);
+      setRole(nextRole);
+      setJwt(getStoredToken(nextAddress));
+      setIsRoleSelectionOpen(nextRole == null);
       setProvider(nextProvider);
       setSigner(nextSigner);
       setContracts(buildContracts(nextSigner));
@@ -236,11 +372,20 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       const nextSigner = await nextProvider.getSigner();
       const nextContracts = buildContracts(nextSigner);
       const nextAddress = accounts[0] ?? null;
+      const nextRole = getStoredRole(nextAddress);
+      const nextToken = getStoredToken(nextAddress);
 
       setAddress(nextAddress);
+      setRole(nextRole);
+      setJwt(nextToken);
       setProvider(nextProvider);
       setSigner(nextSigner);
       setContracts(nextContracts);
+      setIsRoleSelectionOpen(Boolean(nextAddress) && nextRole == null);
+
+      if (nextAddress && nextRole && !nextToken) {
+        await authenticateWallet(nextAddress, nextSigner, nextRole);
+      }
 
       return {
         address: nextAddress,
@@ -271,18 +416,38 @@ export function Web3Provider({ children }: { children: ReactNode }) {
     return nextClient;
   };
 
+  const selectRole = async (nextRole: AppRole) => {
+    if (!address || !signer) {
+      throw new Error('Connect your wallet before selecting a role');
+    }
+
+    persistRole(address, nextRole);
+    setRole(nextRole);
+    await authenticateWallet(address, signer, nextRole);
+  };
+
+  const dismissRoleSelection = () => {
+    setIsRoleSelectionOpen(false);
+  };
+
   const disconnect = () => {
+    clearStoredToken(address);
     setAddress(null);
+    setRole(null);
+    setJwt(null);
     setProvider(null);
     setSigner(null);
     setFhenixClient(null);
     setConnectionError(null);
     setContracts(defaultContracts);
+    setIsRoleSelectionOpen(false);
   };
 
   const value = useMemo<Web3ContextValue>(
     () => ({
       address,
+      role,
+      jwt,
       provider,
       signer,
       fhenixClient,
@@ -292,8 +457,12 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       inferenceEngineAddress: inferenceEngineAddress ?? null,
       isConnecting,
       isInitializingFhe,
+      isAuthenticating,
+      isRoleSelectionOpen,
       connect,
       ensureFhenixClient,
+      selectRole,
+      dismissRoleSelection,
       disconnect,
       abis: {
         blindInference: contractArtifacts.blindInference.abi,
@@ -304,7 +473,20 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       },
       artifacts: contractArtifacts,
     }),
-    [address, provider, signer, fhenixClient, connectionError, contracts, isConnecting, isInitializingFhe],
+    [
+      address,
+      role,
+      jwt,
+      provider,
+      signer,
+      fhenixClient,
+      connectionError,
+      contracts,
+      isConnecting,
+      isInitializingFhe,
+      isAuthenticating,
+      isRoleSelectionOpen,
+    ],
   );
 
   return createElement(Web3Context.Provider, { value }, children);

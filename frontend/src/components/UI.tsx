@@ -41,7 +41,7 @@ export const Button = ({
         sizes[size],
         className
       )}
-      disabled={isLoading}
+      disabled={Boolean(isLoading || props.disabled)}
       {...props}
     >
       {isLoading ? (
