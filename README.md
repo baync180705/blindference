@@ -58,11 +58,11 @@ There are three separate env locations in this repo.
 
 Create:
 
-- [`blindference/fhenix_inference/.env`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/fhenix_inference/.env)
+- `fhenix_inference/.env`
 
 From:
 
-- [`blindference/fhenix_inference/.env.example`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/fhenix_inference/.env.example)
+- `fhenix_inference/.env.example`
 
 Example:
 
@@ -82,11 +82,11 @@ Meaning:
 
 Create:
 
-- [`blindference/frontend/.env.local`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/frontend/.env.local)
+- `frontend/.env.local`
 
 From:
 
-- [`blindference/frontend/.env.example`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/frontend/.env.example)
+- `frontend/.env.example`
 
 Example:
 
@@ -116,7 +116,7 @@ These values should come from the contract deploy output.
 
 Create:
 
-- [`blindference/backend/.env`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/backend/.env)
+- `backend/.env`
 
 Example:
 
@@ -131,14 +131,14 @@ If you are using MongoDB Atlas, use the full Atlas connection string instead.
 ### Contracts
 
 ```bash
-cd /home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/fhenix_inference
+cd blindference/fhenix_inference
 npm install
 ```
 
 ### Backend
 
 ```bash
-cd /home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/backend
+cd blindference/backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -148,7 +148,7 @@ pip install -r requirements.txt
 ### Frontend
 
 ```bash
-cd /home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/frontend
+cd blindference/frontend
 npm install
 ```
 
@@ -157,7 +157,7 @@ npm install
 Deploy to Sepolia from the Hardhat workspace:
 
 ```bash
-cd /home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/fhenix_inference
+cd blindference/fhenix_inference
 npx hardhat compile
 npx hardhat run scripts/deploy.ts --network sepolia
 ```
@@ -165,7 +165,7 @@ npx hardhat run scripts/deploy.ts --network sepolia
 After deployment:
 
 1. copy the printed addresses
-2. place them into [`blindference/frontend/.env.local`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/frontend/.env.local)
+2. place them into `frontend/.env.local`
 3. restart the frontend dev server
 
 ## Running the stack
@@ -175,7 +175,7 @@ Use separate terminals.
 ### Terminal 1: Backend
 
 ```bash
-cd /home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/backend
+cd blindference/backend
 source .venv/bin/activate
 uvicorn main:app --reload --port 8000
 ```
@@ -187,7 +187,7 @@ Backend health check:
 ### Terminal 2: Frontend
 
 ```bash
-cd /home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/frontend
+cd blindference/frontend
 npm run dev -- --force
 ```
 
@@ -198,11 +198,11 @@ Open the URL printed by Vite.
 If contracts changed:
 
 ```bash
-cd /home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/fhenix_inference
+cd blindference/fhenix_inference
 npx hardhat run scripts/deploy.ts --network sepolia
 ```
 
-Then update [`blindference/frontend/.env.local`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/frontend/.env.local) with the new addresses.
+Then update `frontend/.env.local` with the new addresses.
 
 ## Sepolia wallet setup
 
@@ -264,7 +264,7 @@ There is no separate cross-repo ABI export step anymore.
 Check:
 
 - MetaMask is on Sepolia
-- the contract addresses in [`frontend/.env.local`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/frontend/.env.local) are the latest deployed ones
+- the contract addresses in `frontend/.env.local` are the latest deployed ones
 - you restarted Vite after changing env files
 
 ### Model registration reverts with `AI lab not registered`
@@ -286,6 +286,6 @@ This app uses browser-side FHE, wasm, workers, and permit storage. First load in
 ## Security notes
 
 - Never commit real private keys to git
-- Keep [`frontend/.env.local`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/frontend/.env.local) local-only
-- Keep [`backend/.env`](/home/abhieren/Drive/Projects/Buildathon/Fhenix/blindference/backend/.env) local-only
+- Keep `frontend/.env.local` local-only
+- Keep `backend/.env` local-only
 - Rotate any private key or Mongo credential that has been exposed in logs, screenshots, or chat
