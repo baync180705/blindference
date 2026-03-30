@@ -16,7 +16,7 @@ type Tab = 'marketplace' | 'inference' | 'lab';
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab | 'home'>('home');
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
-  const { address, isConnecting, connect, disconnect } = useWeb3();
+  const { address, isConnecting, connect, disconnect, connectionError } = useWeb3();
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -28,6 +28,14 @@ export default function App() {
   const handleSelectModel = (model: Model) => {
     setSelectedModel(model);
     setActiveTab('inference');
+  };
+
+  const handleConnectWallet = async () => {
+    try {
+      await connect();
+    } catch (error) {
+      console.error('Wallet connection failed:', error);
+    }
   };
 
   const NavItem = ({ id, label }: { id: Tab | 'home'; label: string }) => (
@@ -81,15 +89,23 @@ export default function App() {
               </button>
             ) : (
               <button 
-                onClick={connect}
+                onClick={handleConnectWallet}
                 className="bg-white text-black px-5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest hover:bg-[var(--accent-cyan)] transition-colors"
               >
-                Connect
+                {isConnecting ? 'Connecting...' : 'Connect'}
               </button>
             )}
           </div>
         </motion.header>
       </div>
+
+      {connectionError && (
+        <div className="fixed top-24 left-1/2 z-[90] w-full max-w-xl -translate-x-1/2 px-6">
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 backdrop-blur">
+            {connectionError}
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="pt-32 pb-24">

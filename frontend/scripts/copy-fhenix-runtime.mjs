@@ -2,7 +2,7 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 const rootDir = process.cwd();
-const sourceDir = path.join(rootDir, 'node_modules', 'fhenixjs', 'lib', 'esm');
+const sourceDir = path.join(rootDir, 'node_modules', 'fhenixjs', 'dist');
 const targetDir = path.join(rootDir, 'public', 'vendor', 'fhenixjs');
 
 async function main() {

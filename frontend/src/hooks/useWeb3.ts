@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { createContext, createElement, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { BrowserProvider, Contract, JsonRpcSigner } from 'ethers';
 import type { FhenixClient } from 'fhenixjs';
-import blindInferenceArtifact from '../contracts/abis/BlindInference.json';
-import inferenceEngineArtifact from '../contracts/abis/InferenceEngine.json';
-import modelRegistryArtifact from '../contracts/abis/ModelRegistry.json';
-import paymentEscrowArtifact from '../contracts/abis/PaymentEscrow.json';
+import blindInferenceArtifact from '../../../fhenix_inference/artifacts/contracts/BlindInference.sol/BlindInference.json';
+import inferenceEngineArtifact from '../../../fhenix_inference/artifacts/contracts/InferenceEngine.sol/InferenceEngine.json';
+import modelRegistryArtifact from '../../../fhenix_inference/artifacts/contracts/ModelRegistry.sol/ModelRegistry.json';
+import paymentEscrowArtifact from '../../../fhenix_inference/artifacts/contracts/PaymentEscrow.sol/PaymentEscrow.json';
 
 declare global {
   interface Window {
@@ -25,6 +25,31 @@ type Web3Contracts = {
   paymentEscrow: Contract | null;
 };
 
+type Web3ContextValue = {
+  address: string | null;
+  provider: BrowserProvider | null;
+  signer: JsonRpcSigner | null;
+  fhenixClient: FhenixClient | null;
+  connectionError: string | null;
+  contracts: Web3Contracts;
+  isConnecting: boolean;
+  connect: () => Promise<{
+    address: string | null;
+    provider: BrowserProvider;
+    signer: JsonRpcSigner;
+    fhenixClient: FhenixClient | null;
+    contracts: Web3Contracts;
+  }>;
+  disconnect: () => void;
+  abis: {
+    blindInference: unknown[];
+    inferenceEngine: unknown[];
+    modelRegistry: unknown[];
+    paymentEscrow: unknown[];
+  };
+  artifacts: typeof contractArtifacts;
+};
+
 const contractArtifacts = {
   blindInference: blindInferenceArtifact as ContractArtifact,
   inferenceEngine: inferenceEngineArtifact as ContractArtifact,
@@ -38,10 +63,19 @@ const inferenceEngineAddress =
 const modelRegistryAddress = import.meta.env.VITE_MODEL_REGISTRY_ADDRESS as string | undefined;
 const paymentEscrowAddress = import.meta.env.VITE_PAYMENT_ESCROW_ADDRESS as string | undefined;
 
-async function createFhenixClient() {
-  const runtimeEntry = '/vendor/fhenixjs/fhenix.js';
-  const module = await import(/* @vite-ignore */ runtimeEntry);
-  return new module.FhenixClient({ provider: window.ethereum! });
+const defaultContracts: Web3Contracts = {
+  blindInference: null,
+  inferenceEngine: null,
+  modelRegistry: null,
+  paymentEscrow: null,
+};
+
+const Web3Context = createContext<Web3ContextValue | null>(null);
+
+async function createFhenixClient(provider: BrowserProvider) {
+  const runtimeUrl = new URL('/vendor/fhenixjs/fhenix.esm.js', window.location.origin).href;
+  const module = await import(/* @vite-ignore */ runtimeUrl);
+  return new module.FhenixClient({ provider });
 }
 
 function buildContracts(signer: JsonRpcSigner): Web3Contracts {
@@ -61,18 +95,32 @@ function buildContracts(signer: JsonRpcSigner): Web3Contracts {
   };
 }
 
-export function useWeb3() {
+export function Web3Provider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [provider, setProvider] = useState<BrowserProvider | null>(null);
   const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
   const [fhenixClient, setFhenixClient] = useState<FhenixClient | null>(null);
-  const [contracts, setContracts] = useState<Web3Contracts>({
-    blindInference: null,
-    inferenceEngine: null,
-    modelRegistry: null,
-    paymentEscrow: null,
-  });
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [contracts, setContracts] = useState<Web3Contracts>(defaultContracts);
   const [isConnecting, setIsConnecting] = useState(false);
+
+  async function initializeFhenixClient(nextProvider: BrowserProvider) {
+    try {
+      const nextClient = await createFhenixClient(nextProvider);
+      setFhenixClient(nextClient);
+      setConnectionError(null);
+      return nextClient;
+    } catch (error) {
+      console.error('Failed to initialize Fhenix client:', error);
+      setFhenixClient(null);
+      setConnectionError(
+        error instanceof Error
+          ? `Wallet connected, but the Fhenix client failed to initialize: ${error.message}`
+          : 'Wallet connected, but the Fhenix client failed to initialize.',
+      );
+      return null;
+    }
+  }
 
   useEffect(() => {
     let isActive = true;
@@ -82,14 +130,13 @@ export function useWeb3() {
         return;
       }
 
-      const accounts = await window.ethereum.request({ method: 'eth_accounts' }) as string[];
+      const accounts = (await window.ethereum.request({ method: 'eth_accounts' })) as string[];
       if (accounts.length === 0 || !isActive) {
         return;
       }
 
       const nextProvider = new BrowserProvider(window.ethereum);
       const nextSigner = await nextProvider.getSigner();
-      const nextClient = await createFhenixClient();
 
       if (!isActive) {
         return;
@@ -98,8 +145,8 @@ export function useWeb3() {
       setAddress(accounts[0]);
       setProvider(nextProvider);
       setSigner(nextSigner);
-      setFhenixClient(nextClient);
       setContracts(buildContracts(nextSigner));
+      void initializeFhenixClient(nextProvider);
     }
 
     hydrateAuthorizedAccount().catch((error) => {
@@ -117,21 +164,23 @@ export function useWeb3() {
     }
 
     setIsConnecting(true);
+    setConnectionError(null);
     try {
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }) as string[];
+      const accounts = (await window.ethereum.request({ method: 'eth_requestAccounts' })) as string[];
       const nextProvider = new BrowserProvider(window.ethereum);
       const nextSigner = await nextProvider.getSigner();
-      const nextClient = await createFhenixClient();
       const nextContracts = buildContracts(nextSigner);
+      const nextAddress = accounts[0] ?? null;
 
-      setAddress(accounts[0] ?? null);
+      setAddress(nextAddress);
       setProvider(nextProvider);
       setSigner(nextSigner);
-      setFhenixClient(nextClient);
       setContracts(nextContracts);
 
+      const nextClient = await initializeFhenixClient(nextProvider);
+
       return {
-        address: accounts[0] ?? null,
+        address: nextAddress,
         provider: nextProvider,
         signer: nextSigner,
         fhenixClient: nextClient,
@@ -147,29 +196,39 @@ export function useWeb3() {
     setProvider(null);
     setSigner(null);
     setFhenixClient(null);
-    setContracts({
-      blindInference: null,
-      inferenceEngine: null,
-      modelRegistry: null,
-      paymentEscrow: null,
-    });
+    setConnectionError(null);
+    setContracts(defaultContracts);
   };
 
-  return {
-    address,
-    provider,
-    signer,
-    fhenixClient,
-    contracts,
-    isConnecting,
-    connect,
-    disconnect,
-    abis: {
-      blindInference: contractArtifacts.blindInference.abi,
-      inferenceEngine: contractArtifacts.inferenceEngine.abi,
-      modelRegistry: contractArtifacts.modelRegistry.abi,
-      paymentEscrow: contractArtifacts.paymentEscrow.abi,
-    },
-    artifacts: contractArtifacts,
-  };
+  const value = useMemo<Web3ContextValue>(
+    () => ({
+      address,
+      provider,
+      signer,
+      fhenixClient,
+      connectionError,
+      contracts,
+      isConnecting,
+      connect,
+      disconnect,
+      abis: {
+        blindInference: contractArtifacts.blindInference.abi,
+        inferenceEngine: contractArtifacts.inferenceEngine.abi,
+        modelRegistry: contractArtifacts.modelRegistry.abi,
+        paymentEscrow: contractArtifacts.paymentEscrow.abi,
+      },
+      artifacts: contractArtifacts,
+    }),
+    [address, provider, signer, fhenixClient, connectionError, contracts, isConnecting],
+  );
+
+  return createElement(Web3Context.Provider, { value }, children);
+}
+
+export function useWeb3() {
+  const context = useContext(Web3Context);
+  if (!context) {
+    throw new Error('useWeb3 must be used within a Web3Provider');
+  }
+  return context;
 }
