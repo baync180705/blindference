@@ -1,72 +1,61 @@
-import React, { useState, FormEvent, useRef } from 'react';
+import React, { FormEvent, useMemo, useState } from 'react';
 import { Card, Button, Input } from '../components/UI';
-import { Beaker, Upload, DollarSign, Info, CheckCircle, FileJson, FileCode, CheckCircle2, Loader2 } from 'lucide-react';
+import { Beaker, DollarSign, Info, CheckCircle, CheckCircle2, Loader2, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { WeightParserService, ParsedWeights } from '../services/WeightParserService';
-import { encrypt_uint32 } from '../services/fheService';
+import { useWeb3 } from '../hooks/useWeb3';
+import { createMockDiabetesModel, registerMockModel, toPriceUnits } from '../services/fheService';
 
 export default function LabDashboard() {
-  const [price, setPrice] = useState('');
+  const { address, connect, fhenixClient, contracts } = useWeb3();
+  const [price, setPrice] = useState('0');
   const [isRegistering, setIsRegistering] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  
-  // New state for file upload
-  const [parsedData, setParsedData] = useState<ParsedWeights | null>(null);
-  const [isParsing, setIsParsing] = useState(false);
-  const [encryptionProgress, setEncryptionProgress] = useState<{ current: number, total: number } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [registeredModelId, setRegisteredModelId] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsParsing(true);
-    try {
-      const result = await WeightParserService.parse(file);
-      setParsedData(result);
-    } catch (error) {
-      console.error("Parsing failed:", error);
-      alert(error instanceof Error ? error.message : "Failed to parse file");
-    } finally {
-      setIsParsing(false);
-    }
-  };
+  const mockModel = useMemo(() => createMockDiabetesModel(), []);
 
   const handleRegister = async (e: FormEvent) => {
     e.preventDefault();
-    if (!parsedData) return;
-
     setIsRegistering(true);
-    
+    setRegisteredModelId(null);
+    setTxHash(null);
+    setError(null);
+
     try {
-      // Encryption Pipeline
-      const total = parsedData.weights.length;
-      setEncryptionProgress({ current: 0, total });
-      
-      const encryptedWeights: string[] = [];
-      for (let i = 0; i < total; i++) {
-        const enc = await encrypt_uint32(parsedData.weights[i]);
-        encryptedWeights.push(enc);
-        if (i % 10 === 0 || i === total - 1) {
-          setEncryptionProgress({ current: i + 1, total });
-        }
+      let activeClient = fhenixClient;
+      let activeRegistry = contracts.modelRegistry;
+
+      if (!address) {
+        const session = await connect();
+        activeClient = session?.fhenixClient ?? activeClient;
+        activeRegistry = session?.contracts.modelRegistry ?? activeRegistry;
       }
 
-      console.log("Encrypted weights ready for transaction:", encryptedWeights.length);
-      
-      // Mock registerModel transaction
-      await new globalThis.Promise(resolve => setTimeout(resolve, 1500));
-      
-      setIsSuccess(true);
-      setParsedData(null);
-      setPrice('');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      setTimeout(() => setIsSuccess(false), 5000);
-    } catch (error) {
-      console.error("Registration failed:", error);
+      if (!activeClient) {
+        throw new Error('Fhenix client is not initialized yet');
+      }
+
+      if (!activeRegistry) {
+        throw new Error('ModelRegistry contract is not configured');
+      }
+
+      const { modelId, receipt } = await registerMockModel({
+        client: activeClient,
+        modelRegistry: activeRegistry,
+        pricePerQuery: toPriceUnits(price),
+      });
+
+      setRegisteredModelId(modelId.toString());
+      setTxHash(receipt.hash);
+    } catch (registrationError) {
+      setError(
+        registrationError instanceof Error
+          ? registrationError.message
+          : 'Failed to register encrypted model.',
+      );
     } finally {
       setIsRegistering(false);
-      setEncryptionProgress(null);
     }
   };
 
@@ -78,7 +67,7 @@ export default function LabDashboard() {
         </div>
         <div>
           <h1 className="text-3xl font-bold tracking-tight neon-text">Lab Dashboard</h1>
-          <p className="text-[var(--text-muted)]">Register your quantized ML models for blind inference.</p>
+          <p className="text-[var(--text-muted)]">Encrypt and register a quantized logistic-regression model with the Fhenix network public key.</p>
         </div>
       </div>
 
@@ -86,71 +75,37 @@ export default function LabDashboard() {
         <div className="md:col-span-2">
           <Card>
             <form onSubmit={handleRegister} className="space-y-8">
-              {/* Model Upload Zone */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
-                  <Upload className="w-4 h-4" />
-                  Model Weight Ingestion
+                  <Shield className="w-4 h-4" />
+                  Mock Logistic Regression Model
                 </div>
-                
-                <div 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="group relative border-2 border-dashed border-white/10 rounded-2xl p-12 text-center hover:border-[var(--accent-cyan)]/50 transition-all cursor-pointer bg-white/[0.01]"
-                >
-                  <input 
-                    type="file" 
-                    ref={fileInputRef}
-                    onChange={handleFileChange}
-                    accept=".json,.proto,.bin"
-                    className="hidden"
-                  />
-                  
-                  <AnimatePresence mode="wait">
-                    {isParsing ? (
-                      <motion.div 
-                        key="parsing"
-                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="flex flex-col items-center gap-4"
-                      >
-                        <Loader2 className="w-12 h-12 text-[var(--accent-cyan)] animate-spin" />
-                        <p className="text-sm font-mono text-[var(--accent-cyan)]">Analyzing schema...</p>
-                      </motion.div>
-                    ) : parsedData ? (
-                      <motion.div 
-                        key="parsed"
-                        initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-                        className="flex flex-col items-center gap-4"
-                      >
-                        <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                          <CheckCircle2 className="w-8 h-8 text-emerald-500" />
-                        </div>
-                        <div>
-                          <p className="text-lg font-bold text-emerald-500">Schema Validated</p>
-                          <p className="text-sm text-[var(--text-muted)] mt-1">
-                            Detected {parsedData.count.toLocaleString()} weights in {parsedData.format.toUpperCase()} format
-                          </p>
-                        </div>
-                        <Button variant="secondary" size="sm" onClick={(e) => { e.stopPropagation(); setParsedData(null); }}>
-                          Change File
-                        </Button>
-                      </motion.div>
-                    ) : (
-                      <motion.div 
-                        key="idle"
-                        initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                        className="space-y-4"
-                      >
-                        <div className="flex justify-center gap-4">
-                          <FileJson className="w-10 h-10 text-white/20 group-hover:text-[var(--accent-cyan)] transition-colors" />
-                          <FileCode className="w-10 h-10 text-white/20 group-hover:text-[var(--accent-cyan)] transition-colors" />
-                        </div>
-                        <div>
-                          <p className="text-lg font-bold">Drop model weights here</p>
-                          <p className="text-sm text-[var(--text-muted)] mt-1">Supports .json, .proto, and .bin formats</p>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.01] p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-lg font-bold">{mockModel.name}</p>
+                      <p className="text-sm text-[var(--text-muted)]">Quantized linear model for diabetes-risk scoring.</p>
+                    </div>
+                    <div className="text-right text-xs font-mono text-[var(--text-muted)]">
+                      <div>SCALE {mockModel.scale}</div>
+                      <div>{mockModel.ipfsHash}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    {mockModel.features.map((feature, index) => (
+                      <div key={feature} className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">{feature}</div>
+                        <div className="mt-2 text-2xl font-black neon-text">{mockModel.weights[index]}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">Bias</div>
+                    <div className="mt-2 text-2xl font-black neon-text">{mockModel.bias}</div>
+                  </div>
                 </div>
               </div>
 
@@ -160,7 +115,15 @@ export default function LabDashboard() {
                   Marketplace Configuration
                 </div>
                 <div className="max-w-xs">
-                  <Input label="Query Price (FHERC20)" type="number" step="0.1" placeholder="5.0" value={price} onChange={e => setPrice(e.target.value)} required />
+                  <Input
+                    label="Query Price (FHERC20)"
+                    type="number"
+                    step="0.1"
+                    placeholder="0.0"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    required
+                  />
                 </div>
               </div>
 
@@ -168,16 +131,14 @@ export default function LabDashboard() {
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
                     <Info className="w-3 h-3" />
-                    Weights are encrypted before storage on-chain
+                    The lab encrypts weights with the Fhenix network public key before registration.
                   </div>
-                  {encryptionProgress && (
-                    <div className="text-[10px] font-mono text-[var(--accent-cyan)]">
-                      Encrypting: {encryptionProgress.current} / {encryptionProgress.total}
-                    </div>
-                  )}
+                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                    Features: {mockModel.features.join(' / ')}
+                  </div>
                 </div>
-                <Button type="submit" isLoading={isRegistering} disabled={!parsedData}>
-                  {encryptionProgress ? 'Encrypting...' : 'Encrypt & Register'}
+                <Button type="submit" isLoading={isRegistering}>
+                  {isRegistering ? 'Encrypting & Registering...' : 'Register Mock Model'}
                 </Button>
               </div>
             </form>
@@ -188,16 +149,16 @@ export default function LabDashboard() {
           <Card className="bg-[var(--bg-secondary)]/30 border-dashed">
             <h3 className="text-xs font-bold uppercase tracking-widest mb-4 text-[var(--text-muted)]">Quantization Guide</h3>
             <div className="space-y-4 text-xs text-[var(--text-muted)] leading-relaxed">
-              <p>FHE arithmetic works best with integers. Please ensure your weights are scaled (e.g., x1000) and quantized to 8-bit or 16-bit signed integers.</p>
+              <p>Weights and bias are scaled by 1000, then encrypted as `euint32` inputs before the lab submits them on-chain.</p>
               <div className="p-3 bg-[var(--bg-secondary)] rounded border border-[var(--bg-secondary)] font-mono">
-                f(x) = round(w * x + b)
+                score = 150*Glucose + 210*BMI + 55*Age + 500
               </div>
-              <p>The Fhenix network will execute this linear combination blindly using TFHE primitives.</p>
+              <p>Because the contract stores encrypted handles, neither the hospital nor the public chain can read the raw model parameters.</p>
             </div>
           </Card>
 
           <AnimatePresence>
-            {isSuccess && (
+            {registeredModelId && (
               <motion.div
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -207,8 +168,26 @@ export default function LabDashboard() {
                 <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
                 <div>
                   <div className="text-sm font-bold text-emerald-500">Registration Success</div>
-                  <div className="text-[10px] text-emerald-500/70">Model has been encrypted and deployed to the registry.</div>
+                  <div className="text-[10px] text-emerald-500/70">Model ID {registeredModelId}</div>
+                  {txHash && <div className="text-[10px] break-all text-emerald-500/70">{txHash}</div>}
                 </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-lg"
+              >
+                <div className="flex items-center gap-2 text-sm font-bold text-rose-300">
+                  <Loader2 className="w-4 h-4" />
+                  Registration Failed
+                </div>
+                <div className="mt-2 text-[10px] text-rose-200/80">{error}</div>
               </motion.div>
             )}
           </AnimatePresence>

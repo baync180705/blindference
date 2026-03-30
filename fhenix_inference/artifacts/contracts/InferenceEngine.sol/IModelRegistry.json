@@ -16,7 +16,45 @@
         {
           "internalType": "euint32",
           "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "modelId",
           "type": "uint256"
+        }
+      ],
+      "name": "getInferenceFee",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "modelId",
+          "type": "uint256"
+        }
+      ],
+      "name": "getLabWallet",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
         }
       ],
       "stateMutability": "view",
@@ -35,7 +73,7 @@
         {
           "internalType": "euint32[]",
           "name": "",
-          "type": "uint256[]"
+          "type": "bytes32[]"
         }
       ],
       "stateMutability": "view",

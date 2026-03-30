@@ -1,6 +1,7 @@
 import * as dotenv from "dotenv";
 import { ethers } from "hardhat";
 import hre from "hardhat";
+import { Encryptable, FheTypes } from "@cofhe/sdk";
 
 dotenv.config();
 
@@ -9,33 +10,36 @@ async function main() {
   if (!contractAddress) {
     throw new Error("BLIND_INFERENCE_ADDRESS is not set");
   }
+  const requestId = BigInt(process.env.REQUEST_ID ?? "1");
 
   const [user] = await ethers.getSigners();
   const contract = await ethers.getContractAt("BlindInference", contractAddress, user);
+  const cofheClient = await hre.cofhe.createClientWithBatteries(user);
 
   const scaledGlucose = 115;
   const scaledBmi = 133;
 
-  const encryptedFeatures = await Promise.all([
-    hre.fhenixjs.encrypt_uint32(scaledGlucose),
-    hre.fhenixjs.encrypt_uint32(scaledBmi),
-  ]);
+  const encryptedFeatures = await cofheClient
+    .encryptInputs([
+      Encryptable.uint32(BigInt(scaledGlucose)),
+      Encryptable.uint32(BigInt(scaledBmi)),
+    ])
+    .execute();
 
-  const tx = await contract.predict(encryptedFeatures);
+  const tx = await contract.predict(requestId, encryptedFeatures);
   const receipt = await tx.wait();
 
-  const permit = await hre.fhenixjs.createPermit(contractAddress);
-  const sealedPrediction = await contract.getMyPrediction(permit.publicKey);
-  const unsealedPrediction = await hre.fhenixjs.unseal(
-    contractAddress,
-    sealedPrediction,
-  );
+  const encryptedPrediction = await contract.getResult(requestId);
+  const unsealedPrediction = await cofheClient
+    .decryptForView(encryptedPrediction, FheTypes.Uint32)
+    .execute();
 
   console.log("Prediction transaction mined");
   console.log(`User: ${user.address}`);
   console.log(`Tx hash: ${receipt?.hash ?? "unknown"}`);
+  console.log(`Request ID: ${requestId}`);
   console.log(`Scaled inputs: glucose=${scaledGlucose}, bmi=${scaledBmi}`);
-  console.log(`Predicted positive class: ${Boolean(unsealedPrediction)}`);
+  console.log(`Predicted positive class: ${unsealedPrediction === 1n}`);
 }
 
 main().catch((error) => {

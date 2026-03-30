@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.28;
 
 interface IERC20 {
     function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
@@ -109,6 +109,28 @@ contract PaymentEscrow {
         }
 
         emit FeeLocked(requestId, msg.sender, modelId, price);
+        return requestId;
+    }
+
+    function lockFeeFromInference(
+        address requester,
+        uint256 modelId,
+        uint256 amount,
+        address labWallet
+    ) external onlyEngine nonReentrant returns (uint256) {
+        requestCount++;
+        uint256 requestId = requestCount;
+
+        escrows[requestId] = EscrowRecord({
+            requester: requester,
+            modelId: modelId,
+            amount: amount,
+            labWallet: labWallet,
+            status: RequestStatus.PENDING,
+            timestamp: block.timestamp
+        });
+
+        emit FeeLocked(requestId, requester, modelId, amount);
         return requestId;
     }
 

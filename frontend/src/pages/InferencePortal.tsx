@@ -1,25 +1,53 @@
-import React, { useState, useEffect, useRef, FormEvent } from 'react';
-import { Model, encryptInferenceInput, mockDecrypt } from '../services/fheService';
+import React, { useEffect, useRef, useState, FormEvent } from 'react';
+import { formatUnits } from 'ethers';
+import { Model, decryptInferenceResult, ensureSelfPermit, submitInference } from '../services/fheService';
 import { Card, Button, Input } from '../components/UI';
 import { motion, AnimatePresence } from 'motion/react';
 import { Shield, Terminal, Lock, Unlock, Activity, CheckCircle2 } from 'lucide-react';
 import { useWeb3 } from '../hooks/useWeb3';
 
-const DEFAULT_REQUEST_ID = BigInt(import.meta.env.VITE_DEFAULT_REQUEST_ID ?? '1');
+const DEFAULT_MODEL_ID = BigInt(import.meta.env.VITE_DEFAULT_MODEL_ID ?? '1');
+
+type PortalStatus =
+  | 'idle'
+  | 'approving'
+  | 'encrypting'
+  | 'submitting'
+  | 'sealed'
+  | 'decrypting'
+  | 'complete';
 
 export default function InferencePortal({ model }: { model: Model }) {
-  const [biomarkers, setBiomarkers] = useState({
-    age: '', glucose: '', bp: '', bmi: '', insulin: ''
+  const [patientInputs, setPatientInputs] = useState({
+    glucose: '120',
+    bmi: '28',
+    age: '45',
   });
+  const [modelId, setModelId] = useState(
+    (model.modelId ?? DEFAULT_MODEL_ID).toString(),
+  );
   const [logs, setLogs] = useState<string[]>([]);
-  const [status, setStatus] = useState<'idle' | 'encrypting' | 'computing' | 'sealed' | 'decrypting' | 'complete'>('idle');
+  const [status, setStatus] = useState<PortalStatus>('idle');
+  const [requestId, setRequestId] = useState<string | null>(null);
   const [sealedHandle, setSealedHandle] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  const [inferenceFee, setInferenceFee] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
-  const { address, connect, fhenixClient, contracts } = useWeb3();
+  const {
+    address,
+    connect,
+    fhenixClient,
+    contracts,
+    paymentTokenAddress,
+    inferenceEngineAddress,
+  } = useWeb3();
+
+  useEffect(() => {
+    setModelId((model.modelId ?? DEFAULT_MODEL_ID).toString());
+  }, [model.modelId]);
 
   const addLog = (msg: string) => {
-    setLogs(prev => [...prev, `[${new globalThis.Date().toLocaleTimeString()}] ${msg}`]);
+    setLogs((prev) => [...prev, `[${new globalThis.Date().toLocaleTimeString()}] ${msg}`]);
   };
 
   useEffect(() => {
@@ -28,63 +56,95 @@ export default function InferencePortal({ model }: { model: Model }) {
 
   const handleInference = async (e: FormEvent) => {
     e.preventDefault();
-    setStatus('encrypting');
     setLogs([]);
     setResult(null);
     setSealedHandle(null);
+    setRequestId(null);
+    setInferenceFee(null);
     addLog(`Initiating blind inference with ${model.name}...`);
-    
+
     try {
       let activeClient = fhenixClient;
       let activeBlindInference = contracts.blindInference;
+      let activeRegistry = contracts.modelRegistry;
+      let activePaymentToken = contracts.paymentToken;
+      let activeAddress = address;
 
-      if (!address) {
+      if (!activeAddress) {
         addLog('Wallet not connected. Requesting connection...');
         const session = await connect();
         activeClient = session?.fhenixClient ?? activeClient;
         activeBlindInference = session?.contracts.blindInference ?? activeBlindInference;
+        activeRegistry = session?.contracts.modelRegistry ?? activeRegistry;
+        activePaymentToken = session?.contracts.paymentToken ?? activePaymentToken;
+        activeAddress = session?.address ?? activeAddress;
       }
 
       if (!activeClient) {
         throw new Error('Fhenix client is not initialized yet');
       }
 
-      if (!activeBlindInference) {
-        throw new Error('BlindInference contract is not configured');
+      if (!activeBlindInference || !activeRegistry || !activePaymentToken) {
+        throw new Error('BlindInference, ModelRegistry, or payment token contract is not configured');
       }
 
-      const plaintextInputs = Object.entries(biomarkers).map(([field, rawValue]) => {
-        const parsed = Number(rawValue);
-        if (!Number.isFinite(parsed)) {
-          throw new Error(`Invalid numeric value for ${field}`);
+      if (!inferenceEngineAddress) {
+        throw new Error('Inference engine address is not configured');
+      }
+
+      const selectedModelId = BigInt(modelId);
+      const featureVector = [
+        Number(patientInputs.glucose),
+        Number(patientInputs.bmi),
+        Number(patientInputs.age),
+      ];
+      const featureNames = ['Glucose', 'BMI', 'Age'];
+
+      featureVector.forEach((value, index) => {
+        if (!Number.isFinite(value)) {
+          throw new Error(`Invalid numeric value for ${featureNames[index]}`);
         }
-        return { field, value: parsed };
       });
 
-      addLog('Encrypting inference inputs in the browser with Fhenix...');
-      const encryptedInputs = await Promise.all(
-        plaintextInputs.map(async ({ field, value }) => {
-          const encrypted = await encryptInferenceInput(activeClient, value);
-          addLog(`Encrypted ${field} as euint32.`);
-          return encrypted;
-        }),
-      );
+      const fee = (await activeRegistry.getInferenceFee(selectedModelId)) as bigint;
+      const formattedFee = formatUnits(fee, 18);
+      setInferenceFee(formattedFee);
+      addLog(`Fetched inference fee for model ${selectedModelId.toString()}: ${formattedFee} BFHE`);
 
-      setStatus('computing');
-      addLog(`Submitting predict transaction for request ${DEFAULT_REQUEST_ID.toString()}...`);
-      const tx = await activeBlindInference.predict(DEFAULT_REQUEST_ID, encryptedInputs);
-      addLog(`Transaction submitted: ${tx.hash}`);
-      const receipt = await tx.wait();
-      addLog(`Transaction confirmed in block ${receipt.blockNumber}.`);
+      const allowance = (await activePaymentToken.allowance(activeAddress, inferenceEngineAddress)) as bigint;
 
-      try {
-        const resultHandle = await activeBlindInference.getResult(DEFAULT_REQUEST_ID);
-        setSealedHandle(resultHandle.toString());
-        addLog('Encrypted result handle fetched from BlindInference.');
-      } catch (handleError) {
-        setSealedHandle(tx.hash);
-        addLog(`Result handle unavailable immediately, using tx hash reference. ${String(handleError)}`);
+      if (allowance < fee) {
+        setStatus('approving');
+        addLog(`Allowance is insufficient. Prompting approval for ${formattedFee} BFHE...`);
+        const approvalTx = await activePaymentToken.approve(inferenceEngineAddress, fee);
+        addLog(`Approval submitted: ${approvalTx.hash}`);
+        await approvalTx.wait();
+        addLog('Token approval confirmed.');
+      } else {
+        addLog('Existing token allowance is sufficient.');
       }
+
+      setStatus('encrypting');
+      addLog('Encrypting Glucose, BMI, and Age with the Fhenix network public key...');
+
+      setStatus('submitting');
+      addLog('Submitting encrypted inference request to the toll bridge...');
+      const submission = await submitInference({
+        client: activeClient,
+        blindInference: activeBlindInference,
+        modelId: selectedModelId,
+        inputs: featureVector,
+      });
+
+      setRequestId(submission.requestId.toString());
+      addLog(`Inference submitted successfully. Request ID: ${submission.requestId.toString()}`);
+      addLog(`Prediction transaction confirmed: ${submission.receipt.hash}`);
+
+      const encryptedResult = await activeBlindInference.getResult(submission.requestId);
+      const normalizedHandle = encryptedResult.toString();
+      setSealedHandle(normalizedHandle);
+      addLog('Encrypted score handle fetched from BlindInference.');
+      addLog('The result remains sealed until the hospital signs a viewing permit.');
 
       setStatus('sealed');
     } catch (err) {
@@ -94,13 +154,39 @@ export default function InferencePortal({ model }: { model: Model }) {
   };
 
   const handleDecrypt = async () => {
+    if (!fhenixClient || !sealedHandle || !address) {
+      addLog('ERROR: Connect a wallet and run an inference before decrypting.');
+      setStatus('sealed');
+      return;
+    }
+
     setStatus('decrypting');
-    addLog("Requesting decryption from FHE gateway...");
-    const res = await mockDecrypt(sealedHandle!);
-    setResult(res);
-    setStatus('complete');
-    addLog(`Decryption successful. Result: ${res}`);
+    addLog('Prompting wallet for an EIP-712 permit to unseal the result...');
+
+    try {
+      await ensureSelfPermit(fhenixClient, address as `0x${string}`);
+      addLog('Permit ready. Requesting plaintext from the Fhenix threshold network...');
+      const decrypted = await decryptInferenceResult(fhenixClient, sealedHandle);
+      setResult(decrypted.toString());
+      setStatus('complete');
+      addLog(`Decryption successful. Plaintext score: ${decrypted.toString()}`);
+    } catch (error) {
+      addLog(`ERROR: ${error instanceof Error ? error.message : 'Decryption failed.'}`);
+      setStatus('sealed');
+    }
   };
+
+  const isWorking =
+    status === 'approving' || status === 'encrypting' || status === 'submitting';
+
+  const actionLabel =
+    status === 'approving'
+      ? 'Approving Tokens...'
+      : status === 'encrypting'
+        ? 'Encrypting Data...'
+        : status === 'submitting'
+          ? 'Submitting Inference...'
+          : 'Run Blind Inference';
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-500">
@@ -111,63 +197,116 @@ export default function InferencePortal({ model }: { model: Model }) {
           </div>
           <div>
             <h1 className="text-3xl font-bold tracking-tight neon-text">Inference Portal</h1>
-            <p className="text-[var(--text-muted)]">Securely process medical data using {model.name}.</p>
+            <p className="text-[var(--text-muted)]">Hospitals approve BFHE spend, encrypt patient features locally, and only the requester can unseal the final score.</p>
           </div>
         </div>
 
         <Card className="relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4">
-             <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 rounded-full border border-emerald-500/20">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Local Privacy Guard Active</span>
-             </div>
+            <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 rounded-full border border-emerald-500/20">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Pay-Per-Inference Active</span>
+            </div>
           </div>
 
           <form onSubmit={handleInference} className="space-y-6">
             <div className="grid grid-cols-2 gap-6">
-              <Input label="Patient Age" type="number" placeholder="e.g. 45" value={biomarkers.age} onChange={e => setBiomarkers({...biomarkers, age: e.target.value})} required disabled={status !== 'idle'} />
-              <Input label="Glucose Level" type="number" placeholder="mg/dL" value={biomarkers.glucose} onChange={e => setBiomarkers({...biomarkers, glucose: e.target.value})} required disabled={status !== 'idle'} />
-              <Input label="Blood Pressure" type="number" placeholder="mmHg" value={biomarkers.bp} onChange={e => setBiomarkers({...biomarkers, bp: e.target.value})} required disabled={status !== 'idle'} />
-              <Input label="BMI Index" type="number" step="0.1" placeholder="kg/m²" value={biomarkers.bmi} onChange={e => setBiomarkers({...biomarkers, bmi: e.target.value})} required disabled={status !== 'idle'} />
-              <div className="col-span-2">
-                <Input label="Insulin Level" type="number" placeholder="mu U/ml" value={biomarkers.insulin} onChange={e => setBiomarkers({...biomarkers, insulin: e.target.value})} required disabled={status !== 'idle'} />
+              <Input
+                label="On-Chain Model ID"
+                type="number"
+                placeholder="1"
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
+                required
+                disabled={status !== 'idle'}
+              />
+              <div className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 px-4 py-3">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">Spender</div>
+                <div className="mt-2 text-sm text-[var(--text-main)] break-all">{inferenceEngineAddress ?? 'Not configured'}</div>
               </div>
+              <Input
+                label="Glucose"
+                type="number"
+                placeholder="120"
+                value={patientInputs.glucose}
+                onChange={(e) => setPatientInputs({ ...patientInputs, glucose: e.target.value })}
+                required
+                disabled={status !== 'idle'}
+              />
+              <Input
+                label="BMI"
+                type="number"
+                placeholder="28"
+                value={patientInputs.bmi}
+                onChange={(e) => setPatientInputs({ ...patientInputs, bmi: e.target.value })}
+                required
+                disabled={status !== 'idle'}
+              />
+              <div className="col-span-2">
+                <Input
+                  label="Age"
+                  type="number"
+                  placeholder="45"
+                  value={patientInputs.age}
+                  onChange={(e) => setPatientInputs({ ...patientInputs, age: e.target.value })}
+                  required
+                  disabled={status !== 'idle'}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/30 px-4 py-3 text-sm text-[var(--text-muted)]">
+              <div>Selected model: {model.name}</div>
+              <div>Payment token: {paymentTokenAddress ?? 'Not configured'}</div>
+              <div>Inference fee: {inferenceFee ? `${inferenceFee} BFHE` : 'Will be fetched before submit'}</div>
             </div>
 
             <div className="pt-4 flex items-center justify-between border-t border-[var(--bg-secondary)]">
               <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
                 <Lock className="w-3 h-3" />
-                No plaintext data ever leaves the browser
+                Plaintext never leaves the hospital browser. Approval and inference are signed as separate wallet actions.
               </div>
-              <Button type="submit" isLoading={status === 'encrypting' || status === 'computing'} disabled={status !== 'idle'}>
-                Run Blind Inference
+              <Button type="submit" isLoading={isWorking} disabled={status !== 'idle'}>
+                {actionLabel}
               </Button>
             </div>
           </form>
         </Card>
 
         <AnimatePresence>
-          {status === 'computing' && (
-            <motion.div 
+          {(status === 'approving' || status === 'encrypting' || status === 'submitting') && (
+            <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               className="flex flex-col items-center justify-center py-12 space-y-4"
             >
-              <motion.div 
+              <motion.div
                 animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
                 transition={{ repeat: Infinity, duration: 2 }}
                 className="w-24 h-24 rounded-full border-4 border-[var(--accent-cyan)] flex items-center justify-center"
               >
                 <Activity className="w-12 h-12 text-[var(--accent-cyan)]" />
               </motion.div>
-              <h3 className="text-xl font-bold neon-text">On-Chain Computation</h3>
-              <p className="text-sm text-[var(--text-muted)]">Executing FHE.mul/add arithmetic on encrypted ciphertext...</p>
+              <h3 className="text-xl font-bold neon-text">
+                {status === 'approving'
+                  ? 'Authorizing BFHE Spend'
+                  : status === 'encrypting'
+                    ? 'Encrypting Patient Data'
+                    : 'Submitting Inference'}
+              </h3>
+              <p className="text-sm text-[var(--text-muted)]">
+                {status === 'approving'
+                  ? 'Waiting for ERC-20 approve() confirmation...'
+                  : status === 'encrypting'
+                    ? 'Preparing encrypted inputs with the Fhenix network public key...'
+                    : 'Executing encrypted dot-product math on-chain...'}
+              </p>
             </motion.div>
           )}
 
           {(sealedHandle || result) && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               className="space-y-4"
@@ -176,9 +315,11 @@ export default function InferencePortal({ model }: { model: Model }) {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-5 h-5 text-[var(--status-success)]" />
-                    <h3 className="font-bold">Inference Result Generated</h3>
+                    <h3 className="font-bold">Encrypted Score Ready</h3>
                   </div>
-                  <div className="text-[10px] font-mono text-[var(--text-muted)]">HANDLE: {sealedHandle?.substring(0, 12)}...</div>
+                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                    REQUEST {requestId ?? 'pending'}
+                  </div>
                 </div>
 
                 {!result ? (
@@ -188,12 +329,12 @@ export default function InferencePortal({ model }: { model: Model }) {
                     </div>
                     <Button variant="outline" onClick={handleDecrypt} isLoading={status === 'decrypting'}>
                       <Unlock className="w-4 h-4 mr-2" />
-                      Decrypt Diagnosis
+                      Sign Permit & Unseal Score
                     </Button>
                   </div>
                 ) : (
                   <div className="text-center py-8 space-y-2">
-                    <div className="text-sm uppercase tracking-widest text-[var(--text-muted)] font-bold">Final Diagnosis</div>
+                    <div className="text-sm uppercase tracking-widest text-[var(--text-muted)] font-bold">Plaintext Logistic Regression Score</div>
                     <div className="text-4xl font-black neon-text uppercase tracking-tighter">{result}</div>
                   </div>
                 )}

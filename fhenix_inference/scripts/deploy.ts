@@ -28,6 +28,7 @@ async function main() {
   const blindInference = await inferenceFactory.deploy(
     await registry.getAddress(),
     await escrow.getAddress(),
+    await paymentToken.getAddress(),
   );
   await blindInference.waitForDeployment();
 

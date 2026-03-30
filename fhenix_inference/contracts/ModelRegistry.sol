@@ -1,26 +1,33 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.28;
 
-import "@fhenixprotocol/contracts/FHE.sol";
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
 
 contract ModelRegistry {
     address public owner;
     address public inferenceEngine;
 
+    struct AILab {
+        string profileURI;
+        bool isRegistered;
+    }
+
     struct Model {
         uint256 modelId;
         address labWallet;
-        uint256 pricePerQuery;
+        uint256 inferenceFee;
         string ipfsHash;
         euint32[] weightHandles;
         euint32 biasHandle;
         bool active;
     }
 
+    mapping(address => AILab) public aiLabs;
     mapping(uint256 => Model) public models;
     uint256 public modelCount;
 
-    event ModelRegistered(uint256 indexed modelId, address indexed labWallet, uint256 pricePerQuery);
+    event LabRegistered(address indexed labWallet, string profileURI);
+    event ModelRegistered(uint256 indexed modelId, address indexed labWallet, uint256 inferenceFee);
     event ModelDeactivated(uint256 indexed modelId);
     event PriceUpdated(uint256 indexed modelId, uint256 newPrice);
 
@@ -34,6 +41,11 @@ contract ModelRegistry {
         _;
     }
 
+    modifier onlyRegisteredLab() {
+        require(aiLabs[msg.sender].isRegistered, "AI lab not registered");
+        _;
+    }
+
     constructor() {
         owner = msg.sender;
     }
@@ -42,12 +54,23 @@ contract ModelRegistry {
         inferenceEngine = engine;
     }
 
+    function registerLab(string calldata profileURI) external {
+        require(bytes(profileURI).length > 0, "Profile URI required");
+
+        aiLabs[msg.sender] = AILab({
+            profileURI: profileURI,
+            isRegistered: true
+        });
+
+        emit LabRegistered(msg.sender, profileURI);
+    }
+
     function registerModel(
-        inEuint32[] calldata encryptedWeights,
-        inEuint32 calldata encryptedBias,
-        uint256 pricePerQuery,
+        InEuint32[] calldata encryptedWeights,
+        InEuint32 calldata encryptedBias,
+        uint256 inferenceFee,
         string calldata ipfsHash
-    ) external returns (uint256) {
+    ) external onlyRegisteredLab returns (uint256) {
         require(inferenceEngine != address(0), "Inference engine not linked");
 
         modelCount++;
@@ -56,19 +79,23 @@ contract ModelRegistry {
 
         newModel.modelId = newModelId;
         newModel.labWallet = msg.sender;
-        newModel.pricePerQuery = pricePerQuery;
+        newModel.inferenceFee = inferenceFee;
         newModel.ipfsHash = ipfsHash;
         newModel.active = true;
 
         for (uint256 i = 0; i < encryptedWeights.length; i++) {
             euint32 weightHandle = FHE.asEuint32(encryptedWeights[i]);
+            FHE.allowThis(weightHandle);
+            FHE.allow(weightHandle, inferenceEngine);
             newModel.weightHandles.push(weightHandle);
         }
 
         euint32 bias = FHE.asEuint32(encryptedBias);
+        FHE.allowThis(bias);
+        FHE.allow(bias, inferenceEngine);
         newModel.biasHandle = bias;
 
-        emit ModelRegistered(newModelId, msg.sender, pricePerQuery);
+        emit ModelRegistered(newModelId, msg.sender, inferenceFee);
         return newModelId;
     }
 
@@ -78,7 +105,7 @@ contract ModelRegistry {
     }
 
     function updatePrice(uint256 modelId, uint256 newPrice) external onlyLab(modelId) {
-        models[modelId].pricePerQuery = newPrice;
+        models[modelId].inferenceFee = newPrice;
         emit PriceUpdated(modelId, newPrice);
     }
 
@@ -99,7 +126,12 @@ contract ModelRegistry {
 
     function getPrice(uint256 modelId) external view returns (uint256) {
         require(models[modelId].active, "Model inactive");
-        return models[modelId].pricePerQuery;
+        return models[modelId].inferenceFee;
+    }
+
+    function getInferenceFee(uint256 modelId) external view returns (uint256) {
+        require(models[modelId].active, "Model inactive");
+        return models[modelId].inferenceFee;
     }
 
     function getIpfsHash(uint256 modelId) external view returns (string memory) {

@@ -1,14 +1,26 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.28;
 
-import "@fhenixprotocol/contracts/FHE.sol";
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+interface IERC20 {
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+}
 
 interface IModelRegistry {
     function getWeightHandles(uint256 modelId) external view returns (euint32[] memory);
     function getBiasHandle(uint256 modelId) external view returns (euint32);
+    function getInferenceFee(uint256 modelId) external view returns (uint256);
+    function getLabWallet(uint256 modelId) external view returns (address);
 }
 
 interface IPaymentEscrow {
+    function lockFeeFromInference(
+        address requester,
+        uint256 modelId,
+        uint256 amount,
+        address labWallet
+    ) external returns (uint256);
     function markProcessing(uint256 requestId) external;
     function release(uint256 requestId) external;
     function escrows(uint256 requestId) external view returns (
@@ -25,6 +37,7 @@ contract InferenceEngine {
     address public owner;
     IModelRegistry public registry;
     IPaymentEscrow public escrow;
+    IERC20 public paymentToken;
 
     uint256 public constant MAX_WEIGHTS_PER_BLOCK = 15;
 
@@ -43,24 +56,44 @@ contract InferenceEngine {
         _status = _NOT_ENTERED;
     }
 
-    constructor(address registryAddress, address escrowAddress) {
+    constructor(address registryAddress, address escrowAddress, address tokenAddress) {
         owner = msg.sender;
         registry = IModelRegistry(registryAddress);
         escrow = IPaymentEscrow(escrowAddress);
+        paymentToken = IERC20(tokenAddress);
         _status = _NOT_ENTERED;
     }
 
-    function runInference(uint256 requestId, inEuint32[] calldata encryptedInputs) external virtual nonReentrant {
-        _runInference(requestId, encryptedInputs);
+    function predict(uint256 modelId, InEuint32[] calldata encryptedInputs) external virtual nonReentrant returns (uint256) {
+        return _predict(modelId, encryptedInputs);
     }
 
-    function _runInference(uint256 requestId, inEuint32[] calldata encryptedInputs) internal {
-        (address requester, uint256 modelId, , , uint8 status, ) = escrow.escrows(requestId);
-        require(msg.sender == requester, "Not the authorized requester");
-        require(status == 1, "Request is not PENDING");
+    function _predict(uint256 modelId, InEuint32[] calldata encryptedInputs) internal returns (uint256) {
+        uint256 inferenceFee = registry.getInferenceFee(modelId);
+        address labWallet = registry.getLabWallet(modelId);
 
+        if (inferenceFee > 0) {
+            require(
+                paymentToken.transferFrom(msg.sender, address(escrow), inferenceFee),
+                "Token transfer failed. Check allowance."
+            );
+        }
+
+        uint256 requestId = escrow.lockFeeFromInference(msg.sender, modelId, inferenceFee, labWallet);
         escrow.markProcessing(requestId);
 
+        euint32 finalScore = _computeResult(modelId, encryptedInputs);
+        FHE.allowThis(finalScore);
+        FHE.allow(finalScore, msg.sender);
+
+        results[requestId] = finalScore;
+
+        escrow.release(requestId);
+        emit InferenceCompleted(requestId, msg.sender);
+        return requestId;
+    }
+
+    function _computeResult(uint256 modelId, InEuint32[] calldata encryptedInputs) internal returns (euint32) {
         euint32[] memory weights = registry.getWeightHandles(modelId);
         euint32 bias = registry.getBiasHandle(modelId);
 
@@ -75,17 +108,7 @@ contract InferenceEngine {
             sum = FHE.add(sum, FHE.mul(encryptedInput, weights[i]));
         }
 
-        sum = FHE.add(sum, bias);
-
-        // Activation is expressed with native FHE comparison/select primitives only.
-        euint32 threshold = FHE.asEuint32(128);
-        ebool isHighRisk = FHE.gte(sum, threshold);
-        euint32 finalDiagnosis = FHE.select(isHighRisk, FHE.asEuint32(1), FHE.asEuint32(0));
-
-        results[requestId] = finalDiagnosis;
-
-        escrow.release(requestId);
-        emit InferenceCompleted(requestId, msg.sender);
+        return FHE.add(sum, bias);
     }
 
     function getResult(uint256 requestId) external view returns (euint32) {
