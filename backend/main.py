@@ -1,3 +1,6 @@
+import asyncio
+import csv
+import hashlib
 import json
 import logging
 import os
@@ -5,15 +8,17 @@ import inspect
 import re
 import secrets
 import time
+import tempfile
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
+from io import StringIO
 from pathlib import Path
 
 import jwt
 import motor.motor_asyncio
 from bson import ObjectId
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from gridfs.errors import NoFile
@@ -33,6 +38,9 @@ PPML_EXPORT_CANDIDATES = (
     Path(__file__).resolve().parents[2] / "ppml" / "model_export.json",
     Path(__file__).resolve().parents[2] / "PPML" / "model_export.json",
 )
+PPML_ROOT = Path(__file__).resolve().parents[2] / "PPML"
+PPML_TRAIN_MANIFEST = PPML_ROOT / "ppml_train" / "Cargo.toml"
+PPML_DATASET_KEY_CACHE = PPML_ROOT / ".cache" / "dataset_keys_q16f8.bin"
 JWT_SECRET = os.getenv("JWT_SECRET", "blindference-dev-secret")
 
 # Configure logging
@@ -65,7 +73,7 @@ class UserProfilePayload(BaseModel):
 class DatasetManifestPayload(BaseModel):
     file_id: str
     filename: str
-    lab_address: str
+    lab_address: str | None = None
     model_id: str | None = None
     content_type: str | None = None
     notes: str | None = None
@@ -79,6 +87,35 @@ class SubmissionPayload(BaseModel):
     status: str
     result_handle: str | None = None
     plaintext_result: str | None = None
+
+
+def serialize_linked_model(document: dict) -> dict:
+    return {
+        "model_id": str(document["_id"]),
+        "dataset_id": document["dataset_id"],
+        "file_id": document["file_id"],
+        "lab_address": document["lab_address"],
+        "name": document["name"],
+        "description": document.get("description"),
+        "price_bfhe": document.get("price_bfhe"),
+        "status": document["status"],
+        "artifact_type": document.get("artifact_type"),
+        "artifact_sha256": document.get("artifact_sha256"),
+        "content_type": document.get("content_type"),
+        "filename": document["filename"],
+        "original_filename": document.get("original_filename"),
+        "on_chain_model_id": document.get("on_chain_model_id"),
+        "created_at": document["created_at"],
+        "updated_at": document["updated_at"],
+    }
+
+
+def serialize_dataset_manifest(document: dict, linked_models: list[dict]) -> dict:
+    manifest = dict(document)
+    manifest["dataset_id"] = str(manifest.pop("_id"))
+    manifest["linked_models"] = [serialize_linked_model(model) for model in linked_models]
+    manifest["linked_model_count"] = len(linked_models)
+    return manifest
 
 
 def normalize_address(address: str) -> str:
@@ -160,6 +197,178 @@ def get_gridfs_bucket(request: Request) -> AsyncIOMotorGridFSBucket:
 async def maybe_await(result):
     if inspect.isawaitable(result):
         await result
+
+
+def parse_label_column(label_column: str, header: list[str] | None, column_count: int) -> int:
+    normalized = label_column.strip()
+    if normalized == "":
+        raise HTTPException(status_code=400, detail="label_column cannot be empty")
+
+    if normalized.lower() == "last":
+        return column_count - 1
+
+    if header is not None and normalized in header:
+        return header.index(normalized)
+
+    try:
+        label_index = int(normalized)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail="label_column must be 'last', a zero-based index, or a header name",
+        ) from error
+
+    if label_index < 0 or label_index >= column_count:
+        raise HTTPException(status_code=400, detail="label_column is out of range")
+
+    return label_index
+
+
+def build_dataset_encryption_request(
+    file_bytes: bytes,
+    *,
+    filename: str,
+    label_column: str,
+    has_header: bool,
+) -> dict:
+    try:
+        text = file_bytes.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise HTTPException(status_code=400, detail="dataset upload must be valid UTF-8 CSV") from error
+
+    reader = csv.reader(StringIO(text))
+    rows = []
+    for row in reader:
+        normalized_row = [cell.strip() for cell in row]
+        if any(cell != "" for cell in normalized_row):
+            rows.append(normalized_row)
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="dataset upload contained no rows")
+
+    header = rows[0] if has_header else None
+    data_rows = rows[1:] if has_header else rows
+    if not data_rows:
+        raise HTTPException(status_code=400, detail="dataset upload contained no data rows")
+
+    column_count = len(data_rows[0])
+    if column_count < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="dataset must contain at least one feature column and one label column",
+        )
+
+    label_index = parse_label_column(label_column, header, column_count)
+    feature_names = None
+    label_name = None
+    if header is not None:
+        feature_names = [name for index, name in enumerate(header) if index != label_index]
+        label_name = header[label_index]
+
+    feature_rows = []
+    label_rows = []
+
+    for row_number, row in enumerate(data_rows, start=2 if has_header else 1):
+        if len(row) != column_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"row {row_number} has {len(row)} columns, expected {column_count}",
+            )
+
+        try:
+            numeric_row = [float(cell) for cell in row]
+        except ValueError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"row {row_number} contains a non-numeric value",
+            ) from error
+
+        feature_rows.append(
+            [value for index, value in enumerate(numeric_row) if index != label_index]
+        )
+        label_rows.append([numeric_row[label_index]])
+
+    return {
+        "source_format": "csv",
+        "label_column_index": label_index,
+        "feature_rows": feature_rows,
+        "label_rows": label_rows,
+        "feature_names": feature_names,
+        "label_name": label_name,
+        "original_filename": filename,
+    }
+
+
+async def run_dataset_encryptor(request_payload: dict) -> tuple[bytes, dict]:
+    key_cache_path = Path(os.getenv("PPML_DATASET_KEY_CACHE", str(PPML_DATASET_KEY_CACHE)))
+    key_cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    encryptor_binary = os.getenv("PPML_DATASET_ENCRYPTOR_BIN")
+
+    with tempfile.TemporaryDirectory(prefix="blindinference-dataset-") as temp_dir:
+        temp_path = Path(temp_dir)
+        request_path = temp_path / "dataset_request.json"
+        output_path = temp_path / "dataset_export.json"
+        request_path.write_text(json.dumps(request_payload), encoding="utf-8")
+
+        if encryptor_binary:
+            command = [
+                encryptor_binary,
+                "--input",
+                str(request_path),
+                "--output",
+                str(output_path),
+                "--key-cache",
+                str(key_cache_path),
+            ]
+        else:
+            command = [
+                "cargo",
+                "run",
+                "--manifest-path",
+                str(Path(os.getenv("PPML_TRAIN_MANIFEST", str(PPML_TRAIN_MANIFEST)))),
+                "--bin",
+                "encrypt_dataset",
+                "--",
+                "--input",
+                str(request_path),
+                "--output",
+                str(output_path),
+                "--key-cache",
+                str(key_cache_path),
+            ]
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(PPML_ROOT),
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            logger.error(
+                "dataset encryption failed",
+                extra={
+                    "stdout": stdout.decode("utf-8", errors="ignore"),
+                    "stderr": stderr.decode("utf-8", errors="ignore"),
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="failed to encrypt dataset into PPML-compatible artifact",
+            )
+
+        try:
+            artifact_bytes = output_path.read_bytes()
+            artifact_json = json.loads(artifact_bytes.decode("utf-8"))
+        except Exception as error:
+            raise HTTPException(
+                status_code=500,
+                detail="dataset encryptor produced an unreadable artifact",
+            ) from error
+
+    return artifact_bytes, artifact_json
 
 
 @asynccontextmanager
@@ -405,7 +614,7 @@ async def create_dataset_manifest(
     token_payload = decode_access_token(authorization)
     require_role(token_payload, "data_source")
     owner_address = normalize_address(token_payload["sub"])
-    lab_address = normalize_address(payload.lab_address)
+    lab_address = normalize_address(payload.lab_address) if payload.lab_address else None
     now = datetime.now(timezone.utc)
 
     manifest = {
@@ -417,6 +626,7 @@ async def create_dataset_manifest(
         "content_type": payload.content_type.strip() if payload.content_type else None,
         "notes": payload.notes.strip() if payload.notes else None,
         "status": "uploaded",
+        "visibility": "restricted" if lab_address else "ai_labs",
         "created_at": now,
         "updated_at": now,
     }
@@ -438,9 +648,15 @@ async def list_outgoing_datasets(address: str, authorization: str | None = Heade
         {"owner_address": normalized_address},
     ).sort("created_at", -1)
     manifests = await cursor.to_list(length=100)
+    serialized_manifests = []
     for manifest in manifests:
-        manifest["dataset_id"] = str(manifest.pop("_id"))
-    return manifests
+        dataset_id = str(manifest["_id"])
+        linked_model_cursor = app.state.db.model_artifacts.find(
+            {"dataset_id": dataset_id},
+        ).sort("created_at", -1)
+        linked_models = await linked_model_cursor.to_list(length=50)
+        serialized_manifests.append(serialize_dataset_manifest(manifest, linked_models))
+    return serialized_manifests
 
 
 @app.get("/api/v1/datasets/incoming/{address}", tags=["datasets"])
@@ -450,12 +666,45 @@ async def list_incoming_datasets(address: str, authorization: str | None = Heade
     require_role(token_payload, "ai_lab")
 
     cursor = app.state.db.dataset_manifests.find(
-        {"lab_address": normalized_address},
+        {
+            "$or": [
+                {"lab_address": normalized_address},
+                {"visibility": "ai_labs"},
+            ]
+        },
     ).sort("created_at", -1)
     manifests = await cursor.to_list(length=100)
+    serialized_manifests = []
     for manifest in manifests:
-        manifest["dataset_id"] = str(manifest.pop("_id"))
-    return manifests
+        dataset_id = str(manifest["_id"])
+        linked_model_cursor = app.state.db.model_artifacts.find(
+            {"dataset_id": dataset_id},
+        ).sort("created_at", -1)
+        linked_models = await linked_model_cursor.to_list(length=50)
+        serialized_manifests.append(serialize_dataset_manifest(manifest, linked_models))
+    return serialized_manifests
+
+
+@app.get("/api/v1/datasets/catalog", tags=["datasets"])
+async def list_dataset_catalog(authorization: str | None = Header(default=None)):
+    token_payload = decode_access_token(authorization)
+    role = token_payload.get("role")
+    if role not in {"data_source", "ai_lab"}:
+        raise HTTPException(status_code=403, detail="authenticated role required")
+
+    cursor = app.state.db.dataset_manifests.find(
+        {"visibility": "ai_labs"},
+    ).sort("created_at", -1)
+    manifests = await cursor.to_list(length=100)
+    serialized_manifests = []
+    for manifest in manifests:
+        dataset_id = str(manifest["_id"])
+        linked_model_cursor = app.state.db.model_artifacts.find(
+            {"dataset_id": dataset_id},
+        ).sort("created_at", -1)
+        linked_models = await linked_model_cursor.to_list(length=50)
+        serialized_manifests.append(serialize_dataset_manifest(manifest, linked_models))
+    return serialized_manifests
 
 
 @app.post("/api/v1/submissions", tags=["submissions"])
@@ -560,14 +809,135 @@ async def upload_dataset(request: Request, file: UploadFile = File(...)):
     return {"file_id": str(upload_stream._id)}
 
 
-@app.get("/api/v1/dataset/download/{file_id}", tags=["dataset"])
-async def download_dataset(file_id: str, request: Request):
+@app.post("/api/v1/datasets/encrypt-upload", tags=["datasets"])
+async def encrypt_and_upload_dataset(
+    request: Request,
+    file: UploadFile = File(...),
+    label_column: str = Form(default="last"),
+    has_header: bool = Form(default=False),
+    notes: str | None = Form(default=None),
+    authorization: str | None = Header(default=None),
+):
+    token_payload = decode_access_token(authorization)
+    require_role(token_payload, "data_source")
+    owner_address = normalize_address(token_payload["sub"])
+
+    try:
+        file_bytes = await file.read()
+        request_payload = build_dataset_encryption_request(
+            file_bytes,
+            filename=file.filename or "dataset.csv",
+            label_column=label_column,
+            has_header=has_header,
+        )
+        artifact_bytes, artifact_json = await run_dataset_encryptor(request_payload)
+    finally:
+        await file.close()
+
     fs = get_gridfs_bucket(request)
+    now = datetime.now(timezone.utc)
+    artifact_hash = hashlib.sha256(artifact_bytes).hexdigest()
+    artifact_filename = f"{Path(file.filename or 'dataset').stem}_ppml_dataset.json"
+
+    upload_stream = fs.open_upload_stream(
+        artifact_filename,
+        chunk_size_bytes=CHUNK_SIZE,
+        metadata={
+            "content_type": "application/json",
+            "artifact_type": artifact_json.get("artifact_type"),
+            "owner_address": owner_address,
+            "sha256": artifact_hash,
+        },
+    )
+
+    try:
+        await upload_stream.write(artifact_bytes)
+    except Exception as error:
+        await maybe_await(upload_stream.abort())
+        raise HTTPException(status_code=500, detail=f"failed to persist encrypted dataset: {error}") from error
+
+    await maybe_await(upload_stream.close())
+
+    metadata = artifact_json["metadata"]
+    encrypted_tensors = artifact_json["encrypted_tensors"]
+    manifest = {
+        "file_id": str(upload_stream._id),
+        "filename": artifact_filename,
+        "original_filename": file.filename or "dataset.csv",
+        "owner_address": owner_address,
+        "lab_address": None,
+        "model_id": None,
+        "content_type": "application/json",
+        "notes": notes.strip() if notes else None,
+        "status": "encrypted",
+        "visibility": "ai_labs",
+        "artifact_type": artifact_json["artifact_type"],
+        "encryption_scheme": metadata["encryption_scheme"],
+        "source_format": metadata["source_format"],
+        "artifact_sha256": artifact_hash,
+        "row_count": metadata["row_count"],
+        "feature_count": metadata["feature_count"],
+        "label_count": metadata["label_count"],
+        "label_column_index": metadata["label_column_index"],
+        "feature_names": metadata.get("feature_names"),
+        "label_name": metadata.get("label_name"),
+        "quantization": metadata["quantization"],
+        "tensor_artifacts": {
+            "features": {
+                "rows": encrypted_tensors["features"]["rows"],
+                "cols": encrypted_tensors["features"]["cols"],
+                "encrypted_byte_len": len(encrypted_tensors["features"]["bytes"]),
+            },
+            "labels": {
+                "rows": encrypted_tensors["labels"]["rows"],
+                "cols": encrypted_tensors["labels"]["cols"],
+                "encrypted_byte_len": len(encrypted_tensors["labels"]["bytes"]),
+            },
+        },
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    result = await app.state.db.dataset_manifests.insert_one(manifest)
+
+    return {
+        "dataset_id": str(result.inserted_id),
+        **manifest,
+    }
+
+
+@app.get("/api/v1/dataset/download/{file_id}", tags=["dataset"])
+async def download_dataset(
+    file_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    fs = get_gridfs_bucket(request)
+    token_payload = decode_access_token(authorization)
+    requester_address = normalize_address(token_payload["sub"])
+    requester_role = token_payload.get("role")
 
     try:
         object_id = ObjectId(file_id)
     except Exception as error:
         raise HTTPException(status_code=400, detail="invalid GridFS file_id") from error
+
+    file_document = await app.state.db.fs.files.find_one({"_id": object_id})
+    if file_document is None:
+        raise HTTPException(status_code=404, detail="dataset not found")
+
+    metadata = file_document.get("metadata", {}) or {}
+    artifact_type = metadata.get("artifact_type")
+    owner_address = metadata.get("owner_address")
+    lab_address = metadata.get("lab_address")
+
+    if artifact_type == "ppml_encrypted_dataset":
+        allowed = requester_role == "ai_lab" or owner_address == requester_address
+        if not allowed:
+            raise HTTPException(status_code=403, detail="not authorized to download this dataset artifact")
+    elif artifact_type == "ppml_encrypted_model":
+        if requester_role != "ai_lab" or lab_address != requester_address:
+            raise HTTPException(status_code=403, detail="not authorized to download this model artifact")
 
     try:
         download_stream = await fs.open_download_stream(object_id)
@@ -586,9 +956,144 @@ async def download_dataset(file_id: str, request: Request):
 
     return StreamingResponse(
         iter_chunks(),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{file_id}.bin"'},
+        media_type=metadata.get("content_type") or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_document.get("filename", f"{file_id}.bin")}"'
+        },
     )
+
+
+@app.post("/api/v1/models/upload", tags=["models"])
+async def upload_model_artifact(
+    request: Request,
+    file: UploadFile = File(...),
+    dataset_id: str = Form(...),
+    name: str = Form(...),
+    description: str | None = Form(default=None),
+    price_bfhe: str | None = Form(default=None),
+    status: str = Form(default="uploaded"),
+    on_chain_model_id: str | None = Form(default=None),
+    authorization: str | None = Header(default=None),
+):
+    token_payload = decode_access_token(authorization)
+    require_role(token_payload, "ai_lab")
+    lab_address = normalize_address(token_payload["sub"])
+
+    try:
+        dataset_object_id = ObjectId(dataset_id)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="invalid dataset_id") from error
+
+    dataset = await app.state.db.dataset_manifests.find_one({"_id": dataset_object_id})
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="linked dataset not found")
+    if dataset.get("visibility") != "ai_labs" and dataset.get("lab_address") != lab_address:
+        raise HTTPException(status_code=403, detail="dataset is not available to this AI lab")
+    if dataset.get("artifact_type") != "ppml_encrypted_dataset":
+        raise HTTPException(status_code=400, detail="linked dataset is not a PPML-compatible dataset artifact")
+
+    trimmed_name = name.strip()
+    if trimmed_name == "":
+        raise HTTPException(status_code=400, detail="model name is required")
+
+    trimmed_status = status.strip() or "uploaded"
+    trimmed_description = description.strip() if description else None
+    trimmed_price = price_bfhe.strip() if price_bfhe else None
+    trimmed_on_chain_model_id = on_chain_model_id.strip() if on_chain_model_id else None
+
+    file_bytes = await file.read()
+    await file.close()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="model artifact file is empty")
+
+    artifact_hash = hashlib.sha256(file_bytes).hexdigest()
+    fs = get_gridfs_bucket(request)
+    now = datetime.now(timezone.utc)
+
+    upload_stream = fs.open_upload_stream(
+        file.filename or "encrypted_model.bin",
+        chunk_size_bytes=CHUNK_SIZE,
+        metadata={
+            "content_type": file.content_type or "application/octet-stream",
+            "artifact_type": "ppml_encrypted_model",
+            "lab_address": lab_address,
+            "dataset_id": dataset_id,
+            "sha256": artifact_hash,
+        },
+    )
+
+    try:
+        await upload_stream.write(file_bytes)
+    except Exception as error:
+        await maybe_await(upload_stream.abort())
+        raise HTTPException(status_code=500, detail=f"failed to persist model artifact: {error}") from error
+
+    await maybe_await(upload_stream.close())
+
+    document = {
+        "dataset_id": dataset_id,
+        "file_id": str(upload_stream._id),
+        "lab_address": lab_address,
+        "name": trimmed_name,
+        "description": trimmed_description,
+        "price_bfhe": trimmed_price,
+        "status": trimmed_status,
+        "artifact_type": "ppml_encrypted_model",
+        "artifact_sha256": artifact_hash,
+        "content_type": file.content_type or "application/octet-stream",
+        "filename": file.filename or "encrypted_model.bin",
+        "original_filename": file.filename or "encrypted_model.bin",
+        "on_chain_model_id": trimmed_on_chain_model_id,
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await app.state.db.model_artifacts.insert_one(document)
+
+    await app.state.db.dataset_manifests.update_one(
+        {"_id": dataset_object_id},
+        {"$set": {"updated_at": now}},
+    )
+
+    return {
+        "model_id": str(result.inserted_id),
+        **document,
+    }
+
+
+@app.get("/api/v1/models/by-lab/{address}", tags=["models"])
+async def list_models_by_lab(address: str, authorization: str | None = Header(default=None)):
+    normalized_address = normalize_address(address)
+    token_payload = require_subject_match(authorization, normalized_address)
+    require_role(token_payload, "ai_lab")
+
+    cursor = app.state.db.model_artifacts.find(
+        {"lab_address": normalized_address},
+    ).sort("created_at", -1)
+    models = await cursor.to_list(length=100)
+    return [serialize_linked_model(model) for model in models]
+
+
+@app.get("/api/v1/models/catalog", tags=["models"])
+async def list_model_catalog(authorization: str | None = Header(default=None)):
+    token_payload = decode_access_token(authorization)
+    role = token_payload.get("role")
+    if role not in {"data_source", "ai_lab"}:
+        raise HTTPException(status_code=403, detail="authenticated role required")
+
+    cursor = app.state.db.model_artifacts.find({}).sort("created_at", -1)
+    models = await cursor.to_list(length=200)
+    return [serialize_linked_model(model) for model in models]
+
+
+@app.get("/api/v1/models/by-dataset/{dataset_id}", tags=["models"])
+async def list_models_by_dataset(dataset_id: str, authorization: str | None = Header(default=None)):
+    decode_access_token(authorization)
+
+    cursor = app.state.db.model_artifacts.find(
+        {"dataset_id": dataset_id},
+    ).sort("created_at", -1)
+    models = await cursor.to_list(length=100)
+    return [serialize_linked_model(model) for model in models]
 
 
 @app.get("/api/v1/model/status", tags=["model"])

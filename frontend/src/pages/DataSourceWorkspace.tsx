@@ -1,22 +1,38 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Card, Button, Input } from '../components/UI';
 import { useWeb3 } from '../hooks/useWeb3';
-import type { Model } from '../services/fheService';
 import {
-  createDatasetManifest,
+  encryptAndUploadDataset,
   getOutgoingDatasets,
   getOutgoingSubmissions,
   type DatasetManifest,
   type SubmissionRecord,
-  uploadEncryptedDataset,
 } from '../services/workspaceService';
-import { Database, FileUp, Loader2, ShieldAlert, ShieldCheck, Upload, Activity } from 'lucide-react';
+import {
+  Activity,
+  Database,
+  FileUp,
+  Hash,
+  Loader2,
+  ShieldAlert,
+  ShieldCheck,
+  TableProperties,
+  Upload,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 
-export default function DataSourceWorkspace({ selectedModel }: { selectedModel: Model | null }) {
+function formatShortHash(value?: string | null) {
+  if (!value) {
+    return 'Pending';
+  }
+
+  return `${value.slice(0, 12)}...${value.slice(-8)}`;
+}
+
+export default function DataSourceWorkspace() {
   const { address, role, jwt } = useWeb3();
-  const [labAddress, setLabAddress] = useState(selectedModel?.labAddress ?? '');
-  const [modelId, setModelId] = useState(selectedModel?.modelId?.toString() ?? '');
+  const [labelColumn, setLabelColumn] = useState('last');
+  const [hasHeader, setHasHeader] = useState(true);
   const [notes, setNotes] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -25,11 +41,6 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
   const [datasets, setDatasets] = useState<DatasetManifest[]>([]);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    setLabAddress(selectedModel?.labAddress ?? '');
-    setModelId(selectedModel?.modelId?.toString() ?? '');
-  }, [selectedModel?.labAddress, selectedModel?.modelId]);
 
   useEffect(() => {
     if (!address || !jwt || role !== 'data_source') {
@@ -56,7 +67,7 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
         if (!isActive) {
           return;
         }
-        setError(loadError instanceof Error ? loadError.message : 'Failed to load Data Source workspace');
+        setError(loadError instanceof Error ? loadError.message : 'Failed to load upload workspace');
       } finally {
         if (isActive) {
           setIsLoading(false);
@@ -79,7 +90,7 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
         </div>
         <h1 className="text-3xl font-black uppercase tracking-tight text-rose-200">Data Source Access Only</h1>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-[var(--text-muted)]">
-          This workspace is reserved for Data Source wallets. Use it to upload encrypted datasets, monitor orchestration metadata, and track private inference requests.
+          This workspace is reserved for Data Source wallets. Use it to upload CSV datasets, let the backend encrypt them into PPML-compatible tensors, and track private inference requests.
         </p>
       </div>
     );
@@ -95,8 +106,8 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
       setError('Select a dataset file before uploading.');
       return;
     }
-    if (labAddress.trim() === '') {
-      setError('Provide the AI Lab wallet that should receive this dataset.');
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setError('Upload a CSV dataset so the backend can split features and labels correctly.');
       return;
     }
 
@@ -105,20 +116,17 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
     setUploadSuccess(null);
 
     try {
-      const uploadResult = await uploadEncryptedDataset(file);
-      const manifest = await createDatasetManifest(jwt, {
-        file_id: uploadResult.file_id,
-        filename: file.name,
-        lab_address: labAddress,
-        model_id: modelId || undefined,
-        content_type: file.type || 'application/octet-stream',
+      const manifest = await encryptAndUploadDataset(jwt, {
+        file,
+        label_column: labelColumn,
+        has_header: hasHeader,
         notes,
       });
 
       setDatasets((prev) => [manifest, ...prev]);
       setFile(null);
       setNotes('');
-      setUploadSuccess(`Dataset uploaded and assigned to ${manifest.lab_address}.`);
+      setUploadSuccess(`Dataset encrypted into a PPML-compatible artifact with ${manifest.row_count ?? 0} rows.`);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : 'Failed to upload dataset.');
     } finally {
@@ -133,9 +141,9 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
           <Database className="h-8 w-8 text-[var(--accent-cyan)]" />
         </div>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight neon-text">Data Source Workspace</h1>
+          <h1 className="text-3xl font-bold tracking-tight neon-text">Dataset Upload</h1>
           <p className="text-[var(--text-muted)]">
-            Upload encrypted datasets, assign them to AI Labs, and track your blind inference activity.
+            Upload CSV datasets and let the backend encrypt them into PPML-compatible TFHE radix tensors for downstream lab training.
           </p>
         </div>
       </div>
@@ -146,25 +154,32 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
             <form onSubmit={handleUpload} className="space-y-6">
               <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
                 <Upload className="h-4 w-4" />
-                Dataset Intake
+                Dataset Encryption Intake
               </div>
 
               <div className="grid gap-6 md:grid-cols-2">
                 <Input
-                  label="AI Lab Wallet"
+                  label="Label Column"
                   type="text"
-                  value={labAddress}
-                  onChange={(event) => setLabAddress(event.target.value)}
-                  placeholder="0x..."
+                  value={labelColumn}
+                  onChange={(event) => setLabelColumn(event.target.value)}
+                  placeholder="last, 0, outcome"
                   required
                 />
-                <Input
-                  label="Model ID"
-                  type="text"
-                  value={modelId}
-                  onChange={(event) => setModelId(event.target.value)}
-                  placeholder="Optional on-chain model id"
-                />
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--text-muted)]">
+                    CSV Header
+                  </label>
+                  <label className="flex h-[46px] items-center gap-3 rounded-full border border-white/10 bg-white/5 px-5 text-sm text-white">
+                    <input
+                      type="checkbox"
+                      checked={hasHeader}
+                      onChange={(event) => setHasHeader(event.target.checked)}
+                      className="h-4 w-4 accent-[var(--accent-cyan)]"
+                    />
+                    First row contains column names
+                  </label>
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -175,7 +190,7 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
                   className="min-h-28 w-full rounded-3xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white focus:border-[var(--accent-cyan)] focus:outline-none"
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
-                  placeholder="Optional metadata about this upload, expected schema, or purpose."
+                  placeholder="Optional metadata about the dataset schema, cohort, or intended training context."
                 />
               </div>
 
@@ -183,10 +198,10 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                   <div>
                     <div className="text-sm font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
-                      Dataset File
+                      CSV Dataset
                     </div>
                     <div className="mt-2 text-sm text-[var(--text-muted)]">
-                      Upload the encrypted or pre-packaged dataset artifact that should be orchestrated off-chain.
+                      Upload a UTF-8 CSV file. The backend will parse it, split features and labels, and store a PPML-native encrypted dataset artifact in GridFS.
                     </div>
                   </div>
                   <label className="inline-flex cursor-pointer items-center rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold uppercase tracking-widest text-white transition-colors hover:border-[var(--accent-cyan)]/40">
@@ -194,6 +209,7 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
                     {file ? file.name : 'Choose File'}
                     <input
                       type="file"
+                      accept=".csv,text/csv"
                       className="hidden"
                       onChange={(event) => setFile(event.target.files?.[0] ?? null)}
                     />
@@ -203,10 +219,10 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
 
               <div className="flex items-center justify-between border-t border-white/5 pt-4">
                 <div className="text-xs text-[var(--text-muted)]">
-                  This uses Mongo/GridFS only as an orchestration layer for encrypted artifacts. AI Lab authority remains on-chain.
+                  The backend encrypts with PPML-compatible TFHE radix keys, then stores only the encrypted artifact and metadata in Mongo/GridFS.
                 </div>
                 <Button type="submit" isLoading={isUploading}>
-                  Upload Dataset
+                  Encrypt And Upload
                 </Button>
               </div>
             </form>
@@ -215,10 +231,20 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
 
         <div className="space-y-6">
           <Card className="bg-[var(--bg-secondary)]/30 border-dashed">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">Selected Model</h3>
-            <div className="mt-4 space-y-2 text-sm">
-              <div>{selectedModel?.name ?? 'No model preselected'}</div>
-              <div className="text-[var(--text-muted)]">{selectedModel?.labAddress ?? 'Choose a model from the marketplace to prefill this form.'}</div>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--text-muted)]">Upload Rules</h3>
+            <div className="mt-4 space-y-3 text-sm text-[var(--text-muted)]">
+              <div className="flex items-start gap-3">
+                <TableProperties className="mt-0.5 h-4 w-4 text-[var(--accent-cyan)]" />
+                <span>CSV rows must be numeric and rectangular.</span>
+              </div>
+              <div className="flex items-start gap-3">
+                <Hash className="mt-0.5 h-4 w-4 text-[var(--accent-cyan)]" />
+                <span>The label column can be the last column, a zero-based index, or a named header.</span>
+              </div>
+              <div className="flex items-start gap-3">
+                <Database className="mt-0.5 h-4 w-4 text-[var(--accent-cyan)]" />
+                <span>Encrypted artifacts are published to the shared AI-lab dataset catalog after upload.</span>
+              </div>
             </div>
           </Card>
 
@@ -231,7 +257,7 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
                 className="rounded-lg border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70"
               >
                 <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
-                Loading workspace data...
+                Loading upload workspace...
               </motion.div>
             )}
             {uploadSuccess && (
@@ -279,17 +305,44 @@ export default function DataSourceWorkspace({ selectedModel }: { selectedModel: 
                 <div key={dataset.dataset_id} className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <div className="font-bold">{dataset.filename}</div>
+                      <div className="font-bold">{dataset.original_filename ?? dataset.filename}</div>
                       <div className="mt-1 text-xs text-[var(--text-muted)]">
-                        Lab {dataset.lab_address} {dataset.model_id ? `// Model ${dataset.model_id}` : ''}
+                        {dataset.row_count ?? 0} rows // {dataset.feature_count ?? 0} features // label {dataset.label_name ?? dataset.label_column_index ?? 'n/a'}
                       </div>
                     </div>
                     <div className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
                       {dataset.status}
                     </div>
                   </div>
-                  <div className="mt-4 text-xs font-mono text-white/40">
-                    File ID {dataset.file_id}
+                  <div className="mt-4 grid gap-2 text-xs text-white/40 md:grid-cols-2">
+                    <div className="font-mono">File ID {dataset.file_id}</div>
+                    <div className="font-mono">SHA {formatShortHash(dataset.artifact_sha256)}</div>
+                    <div>Scheme {dataset.encryption_scheme ?? 'tfhe-rs-radix'}</div>
+                    <div>Q{dataset.quantization?.total_bits ?? '?'}f{dataset.quantization?.frac_bits ?? '?'}</div>
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-4">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
+                      Linked Models
+                    </div>
+                    <div className="mt-2 text-xs text-[var(--text-muted)]">
+                      {dataset.linked_model_count ?? 0} trained models are linked to this dataset
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {(dataset.linked_models ?? []).length === 0 ? (
+                        <div className="text-xs text-white/40">
+                          No AI lab has uploaded a trained model for this dataset yet.
+                        </div>
+                      ) : (
+                        (dataset.linked_models ?? []).slice(0, 3).map((model) => (
+                          <div key={model.model_id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                            <div className="text-xs font-bold text-white">{model.name}</div>
+                            <div className="mt-1 text-[10px] uppercase tracking-widest text-white/45">
+                              {model.price_bfhe ? `${model.price_bfhe} BFHE` : 'Unpriced'} {model.on_chain_model_id ? `// On-chain ${model.on_chain_model_id}` : ''}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
               ))
