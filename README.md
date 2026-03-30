@@ -51,13 +51,13 @@ flowchart LR
     LAB[AI Lab] --> FE
 
     FE --> MM[MetaMask]
-    FE --> SDK[@cofhe/sdk Client]
+    FE --> SDK[CoFHE SDK Client]
     FE --> IPFS[IPFS via Pinata]
     FE --> API[FastAPI Backend]
 
     API --> MONGO[(MongoDB)]
     API --> GFS[(GridFS)]
-    API --> PPML[PPML-Compatible Encrypted Artifact Bridge]
+    API --> PPML[PPML Compatible Artifact Bridge]
 
     FE --> REG[ModelRegistry]
     FE --> BI[BlindInference]
