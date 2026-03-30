@@ -11,6 +11,10 @@ function defaultProfileUri(address: string) {
   return `blindference://labs/${normalized}`;
 }
 
+function truncateWallet(address: string) {
+  return address.length > 25 ? `${address.slice(0, 25)}...` : address;
+}
+
 export default function ProfileWorkspace() {
   const { address, role, jwt } = useWeb3();
   const [displayName, setDisplayName] = useState('');
@@ -158,7 +162,7 @@ export default function ProfileWorkspace() {
                     Wallet
                   </label>
                   <div className="rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm text-white/75">
-                    {address}
+                    {truncateWallet(address)}
                   </div>
                 </div>
               </div>

@@ -16,13 +16,13 @@ The off-chain encrypted ML engine lives separately in [`PPML`](/home/budhayan/Do
 Blindference now has two explicit product roles:
 
 - `data_source`
-  - uploads encrypted datasets or private inputs
+  - uploads CSV datasets that the backend encrypts into PPML-compatible artifacts
   - requests blind inference
   - tracks results and request metadata
 - `ai_lab`
   - manages app-layer profile metadata
   - activates its lab identity on-chain through `ModelRegistry`
-  - registers encrypted models and operates the supply side
+  - downloads encrypted datasets, uploads encrypted model artifacts, and operates the supply side
 
 ### Source of truth
 
@@ -61,7 +61,8 @@ Use this directory for:
 - signed wallet auth
 - profile metadata
 - MongoDB / GridFS integration
-- dataset manifest tracking
+- dataset encryption orchestration and manifest tracking
+- model artifact uploads linked to datasets
 - inference submission tracking
 - bridging the frontend to off-chain model export status
 
@@ -74,6 +75,7 @@ Use this directory for:
 - CoFHE/Fhenix browser encryption
 - AI Lab activation and model registration
 - Data Source dataset upload and request tracking
+- AI Lab dataset browsing and model provenance views
 - permit-based result decryption
 
 ## Environment files
@@ -231,6 +233,19 @@ npx hardhat run scripts/deploy.ts --network sepolia
 
 Then update `frontend/.env.local` with the new addresses.
 
+### Optional: PPML dataset verification
+
+After a dataset artifact has been downloaded from Blindference, verify that PPML can reattach the serialized tensors:
+
+```bash
+cd PPML
+cargo run -p ppml_train --bin verify_dataset -- \
+  --input /path/to/downloaded_dataset_export.json \
+  --key-cache .cache/dataset_keys_q16f8.bin
+```
+
+The command succeeds only if the downloaded feature and label tensors deserialize correctly with the PPML TFHE key cache.
+
 ## Sepolia wallet setup
 
 The frontend is currently configured for Ethereum Sepolia.
@@ -266,29 +281,33 @@ What happens:
 2. Open `Profile` and complete the app-layer profile
 3. Open `Lab`
 4. Activate the AI Lab on-chain through `ModelRegistry.registerLab(profileURI)`
-5. Register the encrypted model
+5. Open `Datasets` and inspect the encrypted training-dataset catalog
+6. Download one PPML-compatible dataset artifact
+7. Open `Models` and upload an encrypted model artifact linked to exactly one dataset
 
 What happens:
 
 - the profile metadata is stored off-chain in Mongo
 - the AI Lab authority is activated on-chain
-- the browser encrypts model weights and bias with CoFHE
-- the encrypted model is registered on-chain and receives a `modelId`
+- downloaded datasets are PPML-compatible encrypted tensor artifacts
+- model uploads carry explicit dataset provenance
+- dataset cards act as the provenance hub and list all linked trained models
 
 ### 3. Data Source flow
 
 1. Connect with a different Data Source wallet
 2. Open `Profile` and complete the app-layer profile
-3. Open `Source` to upload encrypted dataset artifacts
-4. Open `Market` to browse registered models
-5. Open `Portal` to request blind inference
-6. Approve BFHE if needed
-7. Submit inference
-8. Decrypt the result with a permit
+3. Open `Upload` to submit a CSV dataset
+4. Let the backend convert it into a PPML-compatible encrypted dataset artifact
+5. Open `Marketplace` to browse registered models
+6. Open `Portal` to request blind inference
+7. Approve BFHE if needed
+8. Submit inference
+9. Decrypt the result with a permit
 
 What happens:
 
-- dataset artifacts are uploaded to GridFS
+- dataset artifacts are uploaded to GridFS as PPML-compatible encrypted exports
 - Mongo stores only manifest/orchestration metadata for those uploads
 - the browser encrypts the private inference inputs locally
 - the contract computes over encrypted inputs and encrypted weights
@@ -316,9 +335,22 @@ What happens:
 
 ### PPML relationship
 
-- `PPML` trains and exports encrypted model artifacts
+- `PPML` encrypts datasets for training, verifies downloaded dataset artifacts, and exports encrypted model artifacts
 - `blindference` handles user roles, product UX, contracts, wallet flows, and metadata orchestration
-- current integration is strongest at the product/orchestration boundary; direct PPML artifact ingestion can be expanded later
+- dataset downloads can now be checked with `ppml_train --bin verify_dataset` before entering the training flow
+
+## Current role surfaces
+
+- `data_source`
+  - `Profile`
+  - `Upload`
+  - `Marketplace`
+  - `Portal`
+- `ai_lab`
+  - `Profile`
+  - `Lab`
+  - `Datasets`
+  - `Models`
 
 ## Frontend ABI source
 

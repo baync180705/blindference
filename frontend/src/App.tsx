@@ -4,6 +4,8 @@ import { Model } from './services/fheService';
 import Marketplace from './pages/Marketplace';
 import InferencePortal from './pages/InferencePortal';
 import LabDashboard from './pages/LabDashboard';
+import LabDatasetsWorkspace from './pages/LabDatasetsWorkspace';
+import LabModelsWorkspace from './pages/LabModelsWorkspace';
 import ProfileWorkspace from './pages/ProfileWorkspace';
 import DataSourceWorkspace from './pages/DataSourceWorkspace';
 import { Button } from './components/UI';
@@ -14,11 +16,12 @@ import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { AppRole, ROLE_DEFINITIONS } from './lib/roles';
 
-type Tab = 'marketplace' | 'inference' | 'lab' | 'profile' | 'source';
+type Tab = 'marketplace' | 'inference' | 'lab' | 'profile' | 'upload' | 'datasets' | 'models';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab | 'home'>('home');
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
+  const [selectedDatasetForModels, setSelectedDatasetForModels] = useState<string | null>(null);
   const {
     address,
     role,
@@ -46,11 +49,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (role !== 'ai_lab' && activeTab === 'lab') {
+    if (role !== 'ai_lab' && ['lab', 'datasets', 'models'].includes(activeTab)) {
       setActiveTab('home');
     }
 
-    if (role !== 'data_source' && activeTab === 'source') {
+    if (role !== 'data_source' && ['upload', 'marketplace', 'inference'].includes(activeTab)) {
       setActiveTab('home');
     }
   }, [role, activeTab]);
@@ -75,11 +78,11 @@ export default function App() {
   const primaryCta = role === 'ai_lab'
     ? { label: 'Open Lab Dashboard', action: () => setActiveTab('lab') }
     : role === 'data_source'
-      ? { label: 'Open Source Workspace', action: () => setActiveTab('source') }
+      ? { label: 'Open Upload Workspace', action: () => setActiveTab('upload') }
       : { label: 'Choose Your Role', action: () => void handleConnectWallet() };
 
   const secondaryCta = role === 'ai_lab'
-    ? { label: 'Edit Profile', action: () => setActiveTab('profile') }
+    ? { label: 'Browse Datasets', action: () => setActiveTab('datasets') }
     : role === 'data_source'
       ? { label: 'Explore AI Labs', action: () => setActiveTab('marketplace') }
       : { label: 'AI Lab Workspace', action: () => setActiveTab('lab') };
@@ -120,10 +123,12 @@ export default function App() {
           <nav className="flex items-center gap-1">
             <NavItem id="home" label="Home" />
             {role && <NavItem id="profile" label="Profile" />}
-            <NavItem id="marketplace" label="Market" />
-            {role === 'data_source' && <NavItem id="source" label="Source" />}
-            <NavItem id="inference" label="Portal" />
+            {role === 'data_source' && <NavItem id="marketplace" label="Marketplace" />}
+            {role === 'data_source' && <NavItem id="upload" label="Upload" />}
+            {role === 'data_source' && <NavItem id="inference" label="Portal" />}
             {role === 'ai_lab' && <NavItem id="lab" label="Lab" />}
+            {role === 'ai_lab' && <NavItem id="datasets" label="Datasets" />}
+            {role === 'ai_lab' && <NavItem id="models" label="Models" />}
           </nav>
 
           <div className="flex items-center gap-2 pl-4 pr-2">
@@ -188,7 +193,7 @@ export default function App() {
                     Choose Your Role
                   </h2>
                   <p className="mt-3 max-w-2xl text-sm text-[var(--text-muted)]">
-                    This choice is mapped to your connected wallet in the app shell for Wave 1. Data Sources bring private inputs and request inference. AI Labs register encrypted models and manage supply-side workflows.
+                    This choice is mapped to your connected wallet in the app shell for Wave 1. Data Sources upload training datasets. AI Labs activate on-chain, browse encrypted datasets, and manage supply-side workflows.
                   </p>
                   <p className="mt-3 text-xs font-mono text-white/40">
                     Wallet: {address}
@@ -359,9 +364,9 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'source' && (
+          {activeTab === 'upload' && (
             <div className="max-w-7xl mx-auto px-6">
-              <DataSourceWorkspace selectedModel={selectedModel} />
+              <DataSourceWorkspace />
             </div>
           )}
 
@@ -382,6 +387,23 @@ export default function App() {
           {activeTab === 'lab' && (
             <div className="max-w-7xl mx-auto px-6">
               <LabDashboard />
+            </div>
+          )}
+
+          {activeTab === 'datasets' && (
+            <div className="max-w-7xl mx-auto px-6">
+              <LabDatasetsWorkspace
+                onOpenModels={(datasetId) => {
+                  setSelectedDatasetForModels(datasetId);
+                  setActiveTab('models');
+                }}
+              />
+            </div>
+          )}
+
+          {activeTab === 'models' && (
+            <div className="max-w-7xl mx-auto px-6">
+              <LabModelsWorkspace initialDatasetId={selectedDatasetForModels} />
             </div>
           )}
         </AnimatePresence>
