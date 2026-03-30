@@ -28,3 +28,15 @@ export const uploadDatasetChunk = async (payload: any) => {
   return res.json();
 };
 
+export const getLabDatasets = async (labAddress: string) => {
+  const res = await fetch(`http://127.0.0.1:8000/api/datasets/lab/${labAddress}`);
+  if (!res.ok) throw new Error("Failed to fetch lab datasets");
+  return res.json();
+};
+
+export const getDatasetPayload = async (datasetId: string) => {
+  const res = await fetch(`http://127.0.0.1:8000/api/datasets/${datasetId}`);
+  if (!res.ok) throw new Error("Failed to fetch dataset payload");
+  return res.json();
+};
+

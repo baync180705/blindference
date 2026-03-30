@@ -74,7 +74,7 @@ export default function App() {
             <NavItem id="home" label="Home" />
             <NavItem id="marketplace" label="Market" />
             <NavItem id="inference" label="Portal" />
-            <NavItem id="lab" label="Lab" />
+            {role === 'ai_lab' && <NavItem id="lab" label="Lab" />}
           </nav>
 
           <div className="flex items-center gap-2 pl-4 pr-2">
