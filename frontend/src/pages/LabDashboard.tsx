@@ -6,8 +6,9 @@ import { useWeb3 } from '../hooks/useWeb3';
 import { createMockDiabetesModel, registerMockModel, toPriceUnits } from '../services/fheService';
 
 export default function LabDashboard() {
-  const { address, connect, fhenixClient, contracts } = useWeb3();
+  const { address, connect, fhenixClient, ensureFhenixClient, contracts, isInitializingFhe } = useWeb3();
   const [price, setPrice] = useState('0');
+  const [profileURI, setProfileURI] = useState('blindference://labs/demo-diabetes-lab');
   const [isRegistering, setIsRegistering] = useState(false);
   const [registeredModelId, setRegisteredModelId] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -25,19 +26,41 @@ export default function LabDashboard() {
     try {
       let activeClient = fhenixClient;
       let activeRegistry = contracts.modelRegistry;
+      let activeAddress = address;
 
       if (!address) {
         const session = await connect();
         activeClient = session?.fhenixClient ?? activeClient;
         activeRegistry = session?.contracts.modelRegistry ?? activeRegistry;
+        activeAddress = session?.address ?? activeAddress;
       }
 
       if (!activeClient) {
-        throw new Error('Fhenix client is not initialized yet');
+        activeClient = await ensureFhenixClient();
       }
 
       if (!activeRegistry) {
         throw new Error('ModelRegistry contract is not configured');
+      }
+
+      if (!activeAddress) {
+        throw new Error('AI lab wallet is not connected');
+      }
+
+      const labRecord = await activeRegistry.aiLabs(activeAddress);
+      const isRegistered =
+        typeof labRecord?.isRegistered === 'boolean'
+          ? labRecord.isRegistered
+          : Boolean(Array.isArray(labRecord) ? labRecord[1] : false);
+
+      if (!isRegistered) {
+        const profile = profileURI.trim();
+        if (profile === '') {
+          throw new Error('AI lab profile URI is required');
+        }
+
+        const registerLabTx = await activeRegistry.registerLab(profile);
+        await registerLabTx.wait();
       }
 
       const { modelId, receipt } = await registerMockModel({
@@ -95,7 +118,7 @@ export default function LabDashboard() {
 
                   <div className="grid grid-cols-3 gap-4">
                     {mockModel.features.map((feature, index) => (
-                      <div key={feature} className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
+                      <div key={`${feature || 'feature'}-${index}`} className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/40 p-4">
                         <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)]">{feature}</div>
                         <div className="mt-2 text-2xl font-black neon-text">{mockModel.weights[index]}</div>
                       </div>
@@ -113,6 +136,16 @@ export default function LabDashboard() {
                 <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
                   <DollarSign className="w-4 h-4" />
                   Marketplace Configuration
+                </div>
+                <div className="max-w-xl">
+                  <Input
+                    label="AI Lab Profile URI"
+                    type="text"
+                    placeholder="blindference://labs/demo-diabetes-lab"
+                    value={profileURI}
+                    onChange={(e) => setProfileURI(e.target.value)}
+                    required
+                  />
                 </div>
                 <div className="max-w-xs">
                   <Input
@@ -137,8 +170,12 @@ export default function LabDashboard() {
                     Features: {mockModel.features.join(' / ')}
                   </div>
                 </div>
-                <Button type="submit" isLoading={isRegistering}>
-                  {isRegistering ? 'Encrypting & Registering...' : 'Register Mock Model'}
+                <Button type="submit" isLoading={isRegistering || isInitializingFhe}>
+                  {isRegistering
+                    ? 'Encrypting & Registering...'
+                    : isInitializingFhe
+                      ? 'Initializing FHE...'
+                      : 'Register Mock Model'}
                 </Button>
               </div>
             </form>

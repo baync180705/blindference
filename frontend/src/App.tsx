@@ -274,7 +274,7 @@ export default function App() {
                 <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40">{col.title}</h4>
                 <ul className="space-y-2">
                   {col.links.map((link, j) => (
-                    <li key={j}>
+                    <li key={`${col.title}-${link || 'link'}-${j}`}>
                       <a href="#" className="text-sm text-[var(--text-muted)] hover:text-white transition-colors">{link}</a>
                     </li>
                   ))}

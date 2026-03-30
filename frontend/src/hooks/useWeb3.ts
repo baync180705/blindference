@@ -1,9 +1,6 @@
 import { createContext, createElement, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { BrowserProvider, Contract, JsonRpcSigner } from 'ethers';
-import { Ethers6Adapter } from '@cofhe/sdk/adapters';
-import { chains } from '@cofhe/sdk/chains';
 import type { CofheClient } from '@cofhe/sdk';
-import { createCofheClient, createCofheConfig } from '@cofhe/sdk/web';
 import blindInferenceArtifact from '../../../fhenix_inference/artifacts/contracts/BlindInference.sol/BlindInference.json';
 import inferenceEngineArtifact from '../../../fhenix_inference/artifacts/contracts/InferenceEngine.sol/InferenceEngine.json';
 import modelRegistryArtifact from '../../../fhenix_inference/artifacts/contracts/ModelRegistry.sol/ModelRegistry.json';
@@ -40,6 +37,7 @@ type Web3ContextValue = {
   paymentTokenAddress: string | null;
   inferenceEngineAddress: string | null;
   isConnecting: boolean;
+  isInitializingFhe: boolean;
   connect: () => Promise<{
     address: string | null;
     provider: BrowserProvider;
@@ -47,6 +45,7 @@ type Web3ContextValue = {
     fhenixClient: CofheClient | null;
     contracts: Web3Contracts;
   }>;
+  ensureFhenixClient: () => Promise<CofheClient>;
   disconnect: () => void;
   abis: {
     blindInference: unknown[];
@@ -82,22 +81,54 @@ const defaultContracts: Web3Contracts = {
 };
 
 const Web3Context = createContext<Web3ContextValue | null>(null);
+const SEPOLIA_CHAIN_ID = 11155111n;
+const SEPOLIA_CHAIN_ID_HEX = '0xaa36a7';
+
+async function ensureSepoliaNetwork(provider: BrowserProvider) {
+  const network = await provider.getNetwork();
+  if (network.chainId === SEPOLIA_CHAIN_ID) {
+    return;
+  }
+
+  if (!window.ethereum) {
+    throw new Error('MetaMask is required to switch to Sepolia');
+  }
+
+  try {
+    await window.ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: SEPOLIA_CHAIN_ID_HEX }],
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    throw new Error(
+      message.includes('4902')
+        ? 'Sepolia is not available in MetaMask. Add the Sepolia network and try again.'
+        : 'Wrong network detected. Switch MetaMask to Ethereum Sepolia and reconnect.',
+    );
+  }
+
+  const refreshedNetwork = await provider.getNetwork();
+  if (refreshedNetwork.chainId !== SEPOLIA_CHAIN_ID) {
+    throw new Error('Wrong network detected. Switch MetaMask to Ethereum Sepolia and reconnect.');
+  }
+}
 
 async function createFhenixClient(provider: BrowserProvider, signer: JsonRpcSigner) {
+  await ensureSepoliaNetwork(provider);
+
+  const [{ Ethers6Adapter }, { chains }, { createCofheClient, createCofheConfig }] = await Promise.all([
+    import('@cofhe/sdk/adapters'),
+    import('@cofhe/sdk/chains'),
+    import('@cofhe/sdk/web'),
+  ]);
+
   const config = createCofheConfig({
     supportedChains: [chains.sepolia],
   });
   const client = createCofheClient(config);
   const { publicClient, walletClient } = await Ethers6Adapter(provider, signer);
   await client.connect(publicClient, walletClient);
-
-  const issuer = (await signer.getAddress()) as `0x${string}`;
-  const permit = await client.permits.getOrCreateSelfPermit(undefined, undefined, {
-    issuer,
-    name: 'Blindference viewer permit',
-  });
-  const permitHash = client.permits.getHash(permit);
-  client.permits.selectActivePermit(permitHash);
 
   return client;
 }
@@ -130,8 +161,10 @@ export function Web3Provider({ children }: { children: ReactNode }) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [contracts, setContracts] = useState<Web3Contracts>(defaultContracts);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isInitializingFhe, setIsInitializingFhe] = useState(false);
 
   async function initializeFhenixClient(nextProvider: BrowserProvider, nextSigner: JsonRpcSigner) {
+    setIsInitializingFhe(true);
     try {
       const nextClient = await createFhenixClient(nextProvider, nextSigner);
       setFhenixClient(nextClient);
@@ -142,10 +175,12 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       setFhenixClient(null);
       setConnectionError(
         error instanceof Error
-          ? `Wallet connected, but the Fhenix client failed to initialize: ${error.message}`
+          ? error.message
           : 'Wallet connected, but the Fhenix client failed to initialize.',
       );
       return null;
+    } finally {
+      setIsInitializingFhe(false);
     }
   }
 
@@ -162,7 +197,9 @@ export function Web3Provider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const nextProvider = new BrowserProvider(window.ethereum);
+      let nextProvider = new BrowserProvider(window.ethereum);
+      await ensureSepoliaNetwork(nextProvider);
+      nextProvider = new BrowserProvider(window.ethereum);
       const nextSigner = await nextProvider.getSigner();
 
       if (!isActive) {
@@ -173,7 +210,6 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       setProvider(nextProvider);
       setSigner(nextSigner);
       setContracts(buildContracts(nextSigner));
-      void initializeFhenixClient(nextProvider, nextSigner);
     }
 
     hydrateAuthorizedAccount().catch((error) => {
@@ -194,7 +230,9 @@ export function Web3Provider({ children }: { children: ReactNode }) {
     setConnectionError(null);
     try {
       const accounts = (await window.ethereum.request({ method: 'eth_requestAccounts' })) as string[];
-      const nextProvider = new BrowserProvider(window.ethereum);
+      let nextProvider = new BrowserProvider(window.ethereum);
+      await ensureSepoliaNetwork(nextProvider);
+      nextProvider = new BrowserProvider(window.ethereum);
       const nextSigner = await nextProvider.getSigner();
       const nextContracts = buildContracts(nextSigner);
       const nextAddress = accounts[0] ?? null;
@@ -204,18 +242,33 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       setSigner(nextSigner);
       setContracts(nextContracts);
 
-      const nextClient = await initializeFhenixClient(nextProvider, nextSigner);
-
       return {
         address: nextAddress,
         provider: nextProvider,
         signer: nextSigner,
-        fhenixClient: nextClient,
+        fhenixClient: null,
         contracts: nextContracts,
       };
     } finally {
       setIsConnecting(false);
     }
+  };
+
+  const ensureFhenixClient = async () => {
+    if (fhenixClient) {
+      return fhenixClient;
+    }
+
+    if (!provider || !signer) {
+      throw new Error('Connect your wallet before initializing Fhenix');
+    }
+
+    const nextClient = await initializeFhenixClient(provider, signer);
+    if (!nextClient) {
+      throw new Error('Fhenix client could not be initialized');
+    }
+
+    return nextClient;
   };
 
   const disconnect = () => {
@@ -238,7 +291,9 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       paymentTokenAddress: paymentTokenAddress ?? null,
       inferenceEngineAddress: inferenceEngineAddress ?? null,
       isConnecting,
+      isInitializingFhe,
       connect,
+      ensureFhenixClient,
       disconnect,
       abis: {
         blindInference: contractArtifacts.blindInference.abi,
@@ -249,7 +304,7 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       },
       artifacts: contractArtifacts,
     }),
-    [address, provider, signer, fhenixClient, connectionError, contracts, isConnecting],
+    [address, provider, signer, fhenixClient, connectionError, contracts, isConnecting, isInitializingFhe],
   );
 
   return createElement(Web3Context.Provider, { value }, children);

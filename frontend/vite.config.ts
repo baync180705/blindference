@@ -8,8 +8,15 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), wasm(), tailwindcss()],
+    optimizeDeps: {
+      include: ['iframe-shared-storage', 'tweetnacl'],
+      exclude: ['@cofhe/sdk', 'tfhe', 'fhenixjs'],
+    },
     build: {
       target: 'esnext',
+      commonjsOptions: {
+        include: [/iframe-shared-storage/, /tweetnacl/, /node_modules/],
+      },
     },
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),

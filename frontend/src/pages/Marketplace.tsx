@@ -137,7 +137,7 @@ export default function Marketplace({ onSelectModel }: { onSelectModel: (model: 
 
           {models.map((model, i) => (
             <motion.div
-              key={model.id}
+              key={(model.modelId?.toString() ?? model.id) || `market-model-${i}`}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.08 }}

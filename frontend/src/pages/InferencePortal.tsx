@@ -39,6 +39,7 @@ export default function InferencePortal({ model }: { model: Model }) {
     connect,
     provider,
     fhenixClient,
+    ensureFhenixClient,
     contracts,
     paymentTokenAddress,
     inferenceEngineAddress,
@@ -83,7 +84,8 @@ export default function InferencePortal({ model }: { model: Model }) {
       }
 
       if (!activeClient) {
-        throw new Error('Fhenix client is not initialized yet');
+        addLog('Initializing Fhenix client on demand...');
+        activeClient = await ensureFhenixClient();
       }
 
       if (!activeBlindInference || !activeRegistry || !activePaymentToken) {

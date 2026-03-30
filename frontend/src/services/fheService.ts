@@ -1,8 +1,10 @@
-import { Encryptable, FheTypes, type CofheClient, type EncryptedUint32Input } from '@cofhe/sdk';
-import { getPermit } from 'fhenixjs-access-control';
-import type { FhenixClient } from 'fhenixjs';
+import type { CofheClient, EncryptedUint32Input } from '@cofhe/sdk';
 import type { BrowserProvider, Contract, ContractTransactionReceipt } from 'ethers';
 import { parseUnits } from 'ethers';
+
+type LegacyFhenixClientLike = {
+  unseal: (contractAddress: string, ciphertext: string, account: string) => bigint;
+};
 
 export interface Model {
   id: string;
@@ -62,6 +64,7 @@ export async function encryptUint32(
   client: CofheClient,
   value: number,
 ): Promise<EncryptedInferenceInput> {
+  const { Encryptable } = await import('@cofhe/sdk');
   const [encryptedInput] = await client
     .encryptInputs([Encryptable.uint32(BigInt(assertUint32(value)))])
     .execute();
@@ -72,6 +75,7 @@ export async function encryptUint32Array(
   client: CofheClient,
   values: number[],
 ): Promise<EncryptedInferenceInput[]> {
+  const { Encryptable } = await import('@cofhe/sdk');
   const encryptables = values.map((value) => Encryptable.uint32(BigInt(assertUint32(value))));
   return client.encryptInputs(encryptables).execute();
 }
@@ -83,29 +87,27 @@ export async function encryptInferenceInput(
   return encryptUint32(client, value);
 }
 
-export async function ensureSelfPermit(client: CofheClient, issuer: `0x${string}`) {
-  const permit = await client.permits.getOrCreateSelfPermit(undefined, undefined, {
-    issuer,
-    name: 'Blindference result permit',
-  });
+export async function ensureSelfPermit(client: CofheClient) {
+  const permit = await client.permits.getOrCreateSelfPermit();
   const permitHash = client.permits.getHash(permit);
   client.permits.selectActivePermit(permitHash);
   return permit;
 }
 
 export async function decryptInferenceResult(client: CofheClient, handle: bigint | string): Promise<bigint> {
+  const { FheTypes } = await import('@cofhe/sdk');
   return client.decryptForView(handle, FheTypes.Uint32).execute();
 }
 
 export async function unsealInferenceResult(
-  client: FhenixClient | CofheClient,
+  client: LegacyFhenixClientLike | CofheClient,
   provider: BrowserProvider,
   contractAddress: string,
   encryptedResult: bigint | string,
 ): Promise<bigint> {
-  await getPermit(contractAddress, provider);
-
   if ('unseal' in client && typeof client.unseal === 'function') {
+    const { getPermit } = await import('fhenixjs-access-control');
+    await getPermit(contractAddress, provider);
     const signer = await provider.getSigner();
     const account = await signer.getAddress();
     const normalizedCiphertext =
@@ -114,6 +116,8 @@ export async function unsealInferenceResult(
   }
 
   if ('decryptForView' in client && typeof client.decryptForView === 'function') {
+    const { FheTypes } = await import('@cofhe/sdk');
+    await client.permits.getOrCreateSelfPermit();
     return client.decryptForView(encryptedResult, FheTypes.Uint32).execute();
   }
 
