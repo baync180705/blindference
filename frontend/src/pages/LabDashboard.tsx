@@ -6,12 +6,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useWeb3 } from '../hooks/useWeb3';
 import { createMockDiabetesModel, registerMockModel, toPriceUnits } from '../services/fheService';
 import { getUserProfile } from '../services/profileService';
+import { isIpfsUri } from '../services/ipfsProfileService';
 import { getIncomingDatasets, getIncomingSubmissions, type DatasetManifest, type SubmissionRecord } from '../services/workspaceService';
 
 export default function LabDashboard() {
   const { address, role, jwt, connect, fhenixClient, ensureFhenixClient, contracts, isInitializingFhe } = useWeb3();
   const [price, setPrice] = useState('0');
-  const [profileURI, setProfileURI] = useState('blindference://labs/demo-diabetes-lab');
+  const [profileURI, setProfileURI] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [isActivatingLab, setIsActivatingLab] = useState(false);
   const [isCheckingLabStatus, setIsCheckingLabStatus] = useState(false);
@@ -41,17 +42,17 @@ export default function LabDashboard() {
           return;
         }
 
-        if (profile.profile_uri) {
+        if (isIpfsUri(profile.profile_uri)) {
           setProfileURI(profile.profile_uri);
         } else {
-          setProfileURI(`blindference://labs/${address.toLowerCase()}`);
+          setProfileURI('');
         }
       } catch (loadError) {
         if (!isActive) {
           return;
         }
         console.error('Failed to load AI lab profile:', loadError);
-        setProfileURI(`blindference://labs/${address.toLowerCase()}`);
+        setProfileURI('');
       }
     }
 
@@ -91,7 +92,7 @@ export default function LabDashboard() {
         }
 
         setIsLabRegisteredOnChain(onChainRegistered);
-        if (onChainProfileUri) {
+        if (isIpfsUri(onChainProfileUri)) {
           setProfileURI(onChainProfileUri);
         }
       } catch (statusError) {
@@ -243,7 +244,7 @@ export default function LabDashboard() {
 
       const trimmedProfileUri = profileURI.trim();
       if (trimmedProfileUri === '') {
-        throw new Error('AI lab profile URI is required before on-chain activation');
+        throw new Error('Save your profile to IPFS in the Profile workspace before on-chain activation.');
       }
 
       const labRecord = await activeRegistry.aiLabs(activeAddress);
@@ -346,9 +347,7 @@ export default function LabDashboard() {
             <h2 className="text-2xl font-black uppercase tracking-tight">
               {isLabRegisteredOnChain ? 'AI Lab Registered On Fhenix' : 'Activate Your AI Lab Identity'}
             </h2>
-            <p className="max-w-2xl text-sm leading-relaxed text-[var(--text-muted)]">
-              Phase 4 treats the AI Lab role as canonical on-chain. Before listing models, this wallet must publish its lab identity through `ModelRegistry.registerLab(profileURI)`.
-            </p>
+
             <div className="text-xs font-mono text-white/50">
               Wallet: {address ?? 'Disconnected'}
             </div>
@@ -364,9 +363,9 @@ export default function LabDashboard() {
               label="AI Lab Profile URI"
               type="text"
               value={profileURI}
-              onChange={(event) => setProfileURI(event.target.value)}
-              placeholder="blindference://labs/demo-diabetes-lab"
-              disabled={isLabRegisteredOnChain || isActivatingLab}
+              placeholder="ipfs://..."
+              readOnly
+              disabled={isActivatingLab}
               required
             />
             <div className="flex items-center justify-between gap-4">
@@ -375,13 +374,13 @@ export default function LabDashboard() {
                   ? 'Checking on-chain registration state...'
                   : isLabRegisteredOnChain
                     ? 'This wallet can now register encrypted models.'
-                    : 'Complete this transaction once per AI Lab wallet.'}
+                    : 'Save your profile first, then complete this transaction once per AI Lab wallet.'}
               </div>
               <Button
                 type="button"
                 onClick={handleActivateLab}
                 isLoading={isActivatingLab}
-                disabled={isLabRegisteredOnChain || isCheckingLabStatus}
+                disabled={isLabRegisteredOnChain || isCheckingLabStatus || profileURI.trim() === ''}
               >
                 <Sparkles className="mr-2 h-4 w-4" />
                 {isLabRegisteredOnChain ? 'Activated' : 'Activate On-Chain'}
@@ -434,16 +433,8 @@ export default function LabDashboard() {
                   <DollarSign className="w-4 h-4" />
                   Marketplace Configuration
                 </div>
-                <div className="max-w-xl">
-                  <Input
-                    label="AI Lab Profile URI"
-                    type="text"
-                    placeholder="blindference://labs/demo-diabetes-lab"
-                    value={profileURI}
-                    onChange={(e) => setProfileURI(e.target.value)}
-                    required
-                    disabled={isLabRegisteredOnChain}
-                  />
+                <div className="max-w-xl rounded-3xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white/75 break-all">
+                  {profileURI || 'No IPFS profile URI yet. Save your profile in the Profile workspace first.'}
                 </div>
                 <div className="max-w-xs">
                   <Input

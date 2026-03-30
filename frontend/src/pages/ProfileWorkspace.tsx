@@ -1,8 +1,9 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Card, Button, Input } from '../components/UI';
 import { useWeb3 } from '../hooks/useWeb3';
 import { ROLE_DEFINITIONS } from '../lib/roles';
 import { getUserProfile, saveUserProfile } from '../services/profileService';
+import { fetchUserProfileFromIpfs, isIpfsUri, uploadUserProfileToIpfs } from '../services/ipfsProfileService';
 import { BadgeInfo, Building2, FileText, Loader2, Save, UserRound, ShieldCheck } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 
@@ -27,10 +28,6 @@ export default function ProfileWorkspace() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const roleDef = role ? ROLE_DEFINITIONS[role] : null;
-  const suggestedProfileUri = useMemo(
-    () => (address ? defaultProfileUri(address) : 'blindference://labs/your-wallet'),
-    [address],
-  );
 
   useEffect(() => {
     if (!address || !role || !jwt) {
@@ -51,15 +48,32 @@ export default function ProfileWorkspace() {
         setDisplayName(profile.display_name ?? '');
         setOrganization(profile.organization ?? '');
         setBio(profile.bio ?? '');
-        setProfileUri(profile.profile_uri ?? (role === 'ai_lab' ? suggestedProfileUri : ''));
+        const canonicalProfileUri = isIpfsUri(profile.profile_uri) ? profile.profile_uri : '';
+        setProfileUri(canonicalProfileUri);
+
+        if (canonicalProfileUri) {
+          try {
+            const ipfsProfile = await fetchUserProfileFromIpfs(canonicalProfileUri);
+            if (!isActive) {
+              return;
+            }
+
+            setDisplayName(ipfsProfile.display_name ?? '');
+            setOrganization(ipfsProfile.organization ?? '');
+            setBio(ipfsProfile.bio ?? '');
+          } catch (ipfsError) {
+            if (!isActive) {
+              return;
+            }
+
+            console.error('Failed to fetch profile from IPFS:', ipfsError);
+          }
+        }
       } catch (loadError) {
         if (!isActive) {
           return;
         }
         setError(loadError instanceof Error ? loadError.message : 'Failed to load profile');
-        if (role === 'ai_lab') {
-          setProfileUri(suggestedProfileUri);
-        }
       } finally {
         if (isActive) {
           setIsLoading(false);
@@ -72,7 +86,7 @@ export default function ProfileWorkspace() {
     return () => {
       isActive = false;
     };
-  }, [address, role, jwt, suggestedProfileUri]);
+  }, [address, role, jwt]);
 
   const handleSave = async (event: FormEvent) => {
     event.preventDefault();
@@ -86,18 +100,30 @@ export default function ProfileWorkspace() {
     setSuccess(null);
 
     try {
-      const saved = await saveUserProfile(address, jwt, {
-        display_name: displayName,
-        organization,
-        bio,
-        profile_uri: role === 'ai_lab' ? profileUri : '',
+      const timestamp = new Date().toISOString();
+      const nextProfileUri = await uploadUserProfileToIpfs({
+        version: 1,
+        address,
+        role,
+        display_name: displayName.trim() || null,
+        organization: organization.trim() || null,
+        bio: bio.trim() || null,
+        created_at: timestamp,
+        updated_at: timestamp,
       });
 
-      setDisplayName(saved.display_name ?? '');
-      setOrganization(saved.organization ?? '');
-      setBio(saved.bio ?? '');
-      setProfileUri(saved.profile_uri ?? (role === 'ai_lab' ? suggestedProfileUri : ''));
-      setSuccess('Profile saved successfully.');
+      const saved = await saveUserProfile(address, jwt, {
+        display_name: '',
+        organization: '',
+        bio: '',
+        profile_uri: nextProfileUri,
+      });
+
+      setDisplayName(displayName.trim());
+      setOrganization(organization.trim());
+      setBio(bio.trim());
+      setProfileUri(saved.profile_uri ?? nextProfileUri);
+      setSuccess('Profile saved to IPFS successfully.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save profile');
     } finally {
@@ -183,22 +209,20 @@ export default function ProfileWorkspace() {
                 />
               </div>
 
-              {role === 'ai_lab' && (
-                <Input
-                  label="On-Chain Profile URI"
-                  type="text"
-                  value={profileUri}
-                  onChange={(event) => setProfileUri(event.target.value)}
-                  placeholder={suggestedProfileUri}
-                  required
-                />
-              )}
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--text-muted)]">
+                  Canonical IPFS Profile URI
+                </label>
+                <div className="rounded-3xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-white/75 break-all">
+                  {profileUri || 'Profile not published yet. Saving will pin the latest JSON to IPFS.'}
+                </div>
+              </div>
 
               <div className="flex items-center justify-between border-t border-white/5 pt-4">
                 <div className="text-xs text-[var(--text-muted)]">
                   {role === 'ai_lab'
-                    ? 'This profile URI will be reused when activating your AI Lab on-chain.'
-                    : 'This metadata stays in the app layer and helps contextualize your Data Source identity.'}
+                    ? 'Saving publishes your profile JSON to IPFS and the resulting URI is what the AI Lab contract call will use.'
+                    : 'Saving publishes your wallet profile JSON to IPFS and keeps only the resulting URI in app storage.'}
                 </div>
                 <Button type="submit" isLoading={isSaving} disabled={isLoading}>
                   <Save className="mr-2 h-4 w-4" />
@@ -238,11 +262,9 @@ export default function ProfileWorkspace() {
               <p>
                 <span className="font-bold text-white">Bio:</span> enough context for trust, discovery, and reviewer clarity.
               </p>
-              {role === 'ai_lab' && (
-                <p>
-                  <span className="font-bold text-white">Profile URI:</span> the on-chain reference your lab activation transaction will publish.
-                </p>
-              )}
+              <p>
+                <span className="font-bold text-white">IPFS URI:</span> generated automatically when you save, then reused anywhere Blindference needs your canonical profile reference.
+              </p>
             </div>
           </Card>
 

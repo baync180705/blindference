@@ -20,7 +20,7 @@ Blindference now has two explicit product roles:
   - requests blind inference
   - tracks results and request metadata
 - `ai_lab`
-  - manages app-layer profile metadata
+  - manages wallet-bound profile metadata pinned to IPFS
   - activates its lab identity on-chain through `ModelRegistry`
   - downloads encrypted datasets, uploads encrypted model artifacts, and operates the supply side
 
@@ -29,7 +29,8 @@ Blindference now has two explicit product roles:
 - Wallet address: user identity
 - Signed wallet authentication: backend session / JWT issuance
 - `ModelRegistry.registerLab(...)`: canonical AI Lab activation
-- MongoDB: metadata, orchestration, profiles, dataset manifests, submission tracking
+- IPFS: canonical profile documents
+- MongoDB: metadata pointers, orchestration, dataset manifests, submission tracking
 
 MongoDB is intentionally **not** the authority for AI Lab identity. It stores application metadata and operational records only.
 
@@ -59,7 +60,7 @@ Use this directory for:
 Use this directory for:
 
 - signed wallet auth
-- profile metadata
+- profile URI pointers
 - MongoDB / GridFS integration
 - dataset encryption orchestration and manifest tracking
 - model artifact uploads linked to datasets
@@ -126,6 +127,8 @@ VITE_PAYMENT_ESCROW_ADDRESS=0xYOUR_PAYMENT_ESCROW_ADDRESS
 VITE_PAYMENT_TOKEN_ADDRESS=0xYOUR_PAYMENT_TOKEN_ADDRESS
 VITE_DEFAULT_MODEL_ID=1
 VITE_DEFAULT_REQUEST_ID=1
+VITE_PINATA_JWT=your_pinata_jwt
+VITE_IPFS_GATEWAY_BASE_URL=https://gateway.pinata.cloud/ipfs
 ```
 
 Meaning:
@@ -137,6 +140,8 @@ Meaning:
 - `VITE_PAYMENT_TOKEN_ADDRESS`: BFHE/mock payment token address
 - `VITE_DEFAULT_MODEL_ID`: default model selection in the portal
 - `VITE_DEFAULT_REQUEST_ID`: optional fallback request id for demos
+- `VITE_PINATA_JWT`: browser pinning token used to publish profile JSON to IPFS
+- `VITE_IPFS_GATEWAY_BASE_URL`: gateway used to fetch `ipfs://...` profile documents
 
 These values should come from the contract deploy output.
 
