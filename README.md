@@ -14,7 +14,7 @@ The companion repository, `PPML`, focuses on encrypted model training. `blindfer
 
 ## Demo
 
-- Video walkthrough: `<add-demo-video-link>`
+- Video walkthrough: `<https://www.youtube.com/watch?v=x9_QOVbH4UQ&time_continue=0&embeds_referring_euri=https%3A%2F%2Fapp.akindo.io%2F>`
 
 ## What Blindference Solves
 
