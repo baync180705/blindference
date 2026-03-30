@@ -562,12 +562,16 @@ async def update_user_profile(
     normalized_address = normalize_address(address)
     token_payload = require_subject_match(authorization, normalized_address)
     now = datetime.now(timezone.utc)
+    profile_uri = payload.profile_uri.strip() if payload.profile_uri else None
+
+    if profile_uri is None:
+        raise HTTPException(status_code=400, detail="profile_uri is required")
 
     sanitized_profile = {
-        "display_name": payload.display_name.strip() if payload.display_name else None,
-        "organization": payload.organization.strip() if payload.organization else None,
-        "bio": payload.bio.strip() if payload.bio else None,
-        "profile_uri": payload.profile_uri.strip() if payload.profile_uri else None,
+        "display_name": None,
+        "organization": None,
+        "bio": None,
+        "profile_uri": profile_uri,
     }
 
     await app.state.db.users.update_one(

@@ -56,7 +56,7 @@ export function createMockDiabetesModel(): MockLogisticRegressionModel {
     features: ['Glucose', 'BMI', 'Age'],
     weights: [150, 210, 55],
     bias: 500,
-    ipfsHash: 'blindference://diabetes-logreg-v1',
+    ipfsHash: 'ipfs://diabetes-logreg-v1',
   };
 }
 
