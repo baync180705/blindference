@@ -7,6 +7,7 @@ import os
 import inspect
 import re
 import secrets
+import shutil
 import time
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -34,13 +35,19 @@ ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 AUTH_NONCE_TTL_MINUTES = 5
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
+DEFAULT_PPML_ROOT = Path(os.getenv("PPML_ROOT", str(Path(__file__).resolve().parents[2] / "PPML"))).expanduser()
 PPML_EXPORT_CANDIDATES = (
     Path(__file__).resolve().parents[2] / "ppml" / "model_export.json",
     Path(__file__).resolve().parents[2] / "PPML" / "model_export.json",
+    DEFAULT_PPML_ROOT / "model_export.json",
 )
-PPML_ROOT = Path(__file__).resolve().parents[2] / "PPML"
-PPML_TRAIN_MANIFEST = PPML_ROOT / "ppml_train" / "Cargo.toml"
-PPML_DATASET_KEY_CACHE = PPML_ROOT / ".cache" / "dataset_keys_q16f8.bin"
+PPML_ROOT = DEFAULT_PPML_ROOT
+PPML_TRAIN_MANIFEST = Path(
+    os.getenv("PPML_TRAIN_MANIFEST", str(PPML_ROOT / "ppml_train" / "Cargo.toml"))
+).expanduser()
+PPML_DATASET_KEY_CACHE = Path(
+    os.getenv("PPML_DATASET_KEY_CACHE", str(PPML_ROOT / ".cache" / "dataset_keys_q16f8.bin"))
+).expanduser()
 JWT_SECRET = os.getenv("JWT_SECRET", "blindference-dev-secret")
 
 # Configure logging
@@ -210,6 +217,22 @@ def get_model_export_path() -> Path | None:
     return None
 
 
+def resolve_executable(command: str) -> str | None:
+    candidate = Path(command).expanduser()
+    if candidate.parent != Path("."):
+        return str(candidate) if candidate.exists() and os.access(candidate, os.X_OK) else None
+
+    resolved = shutil.which(command)
+    if resolved:
+        return resolved
+
+    cargo_home_candidate = Path.home() / ".cargo" / "bin" / command
+    if cargo_home_candidate.exists() and os.access(cargo_home_candidate, os.X_OK):
+        return str(cargo_home_candidate)
+
+    return None
+
+
 def get_gridfs_bucket(request: Request) -> AsyncIOMotorGridFSBucket:
     bucket = getattr(request.app.state, "fs", None)
     if bucket is None:
@@ -332,10 +355,13 @@ def build_dataset_encryption_request(
 
 
 async def run_dataset_encryptor(request_payload: dict) -> tuple[bytes, dict]:
-    key_cache_path = Path(os.getenv("PPML_DATASET_KEY_CACHE", str(PPML_DATASET_KEY_CACHE)))
+    key_cache_path = PPML_DATASET_KEY_CACHE
     key_cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     encryptor_binary = os.getenv("PPML_DATASET_ENCRYPTOR_BIN")
+    resolved_encryptor_binary = resolve_executable(encryptor_binary) if encryptor_binary else None
+    cargo_binary = None if encryptor_binary else resolve_executable("cargo")
+    manifest_path = PPML_TRAIN_MANIFEST
 
     with tempfile.TemporaryDirectory(prefix="blindinference-dataset-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -344,8 +370,13 @@ async def run_dataset_encryptor(request_payload: dict) -> tuple[bytes, dict]:
         request_path.write_text(json.dumps(request_payload), encoding="utf-8")
 
         if encryptor_binary:
+            if not resolved_encryptor_binary:
+                raise HTTPException(
+                    status_code=500,
+                    detail="PPML_DATASET_ENCRYPTOR_BIN is set but is not an executable file",
+                )
             command = [
-                encryptor_binary,
+                resolved_encryptor_binary,
                 "--input",
                 str(request_path),
                 "--output",
@@ -354,11 +385,24 @@ async def run_dataset_encryptor(request_payload: dict) -> tuple[bytes, dict]:
                 str(key_cache_path),
             ]
         else:
+            if not cargo_binary:
+                raise HTTPException(
+                    status_code=500,
+                    detail="dataset encryptor is unavailable: install cargo or set PPML_DATASET_ENCRYPTOR_BIN",
+                )
+            if not manifest_path.exists():
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"dataset encryptor manifest was not found at {manifest_path}; "
+                        "clone/configure the PPML companion repo or set PPML_DATASET_ENCRYPTOR_BIN"
+                    ),
+                )
             command = [
-                "cargo",
+                cargo_binary,
                 "run",
                 "--manifest-path",
-                str(Path(os.getenv("PPML_TRAIN_MANIFEST", str(PPML_TRAIN_MANIFEST)))),
+                str(manifest_path),
                 "--bin",
                 "encrypt_dataset",
                 "--",
@@ -370,12 +414,25 @@ async def run_dataset_encryptor(request_payload: dict) -> tuple[bytes, dict]:
                 str(key_cache_path),
             ]
 
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(PPML_ROOT),
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(PPML_ROOT),
+            )
+        except PermissionError as error:
+            logger.exception("dataset encryptor command is not executable", extra={"command": command})
+            raise HTTPException(
+                status_code=500,
+                detail="dataset encryptor command is not executable; verify cargo or PPML_DATASET_ENCRYPTOR_BIN permissions",
+            ) from error
+        except FileNotFoundError as error:
+            logger.exception("dataset encryptor command was not found", extra={"command": command})
+            raise HTTPException(
+                status_code=500,
+                detail="dataset encryptor command was not found; install cargo or set PPML_DATASET_ENCRYPTOR_BIN",
+            ) from error
         stdout, stderr = await process.communicate()
 
         if process.returncode != 0:

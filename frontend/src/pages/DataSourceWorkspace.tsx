@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Card, Button, Input } from '../components/UI';
+import { Card, Button } from '../components/UI';
 import { useWeb3 } from '../hooks/useWeb3';
 import {
   encryptAndUploadDataset,
@@ -29,6 +29,49 @@ function formatShortHash(value?: string | null) {
   return `${value.slice(0, 12)}...${value.slice(-8)}`;
 }
 
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+
+    if (character === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (character === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += character;
+  }
+
+  values.push(current.trim());
+  return values;
+}
+
+function getFirstNonEmptyCsvLine(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+}
+
+const DEFAULT_LABEL_OPTIONS = [
+  { value: 'last', label: 'Last column' },
+  { value: '0', label: 'Column 0' },
+];
+
 export default function DataSourceWorkspace() {
   const { address, role, jwt, paymentTokenName } = useWeb3();
   const [labelColumn, setLabelColumn] = useState('last');
@@ -41,6 +84,7 @@ export default function DataSourceWorkspace() {
   const [datasets, setDatasets] = useState<DatasetManifest[]>([]);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [labelOptions, setLabelOptions] = useState<Array<{ value: string; label: string }>>(DEFAULT_LABEL_OPTIONS);
 
   useEffect(() => {
     if (!address || !jwt || role !== 'data_source') {
@@ -81,6 +125,64 @@ export default function DataSourceWorkspace() {
       isActive = false;
     };
   }, [address, jwt, role]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function deriveLabelOptions() {
+      if (!file || !file.name.toLowerCase().endsWith('.csv')) {
+        setLabelOptions(DEFAULT_LABEL_OPTIONS);
+        setLabelColumn('last');
+        return;
+      }
+
+      try {
+        const text = await file.text();
+        if (!isActive) {
+          return;
+        }
+
+        const firstLine = getFirstNonEmptyCsvLine(text.replace(/^\ufeff/, ''));
+        if (!firstLine) {
+          setLabelOptions(DEFAULT_LABEL_OPTIONS);
+          setLabelColumn('last');
+          return;
+        }
+
+        const columns = parseCsvLine(firstLine);
+        if (columns.length < 2) {
+          setLabelOptions(DEFAULT_LABEL_OPTIONS);
+          setLabelColumn('last');
+          return;
+        }
+
+        const derivedOptions = [
+          ...DEFAULT_LABEL_OPTIONS,
+          ...columns.map((column, index) => ({
+            value: hasHeader ? column : String(index),
+            label: hasHeader ? `${column || `Column ${index + 1}`} (${index})` : `Column ${index}`,
+          })),
+        ];
+
+        setLabelOptions(derivedOptions);
+        if (!derivedOptions.some((option) => option.value === labelColumn)) {
+          setLabelColumn('last');
+        }
+      } catch {
+        if (!isActive) {
+          return;
+        }
+        setLabelOptions(DEFAULT_LABEL_OPTIONS);
+        setLabelColumn('last');
+      }
+    }
+
+    void deriveLabelOptions();
+
+    return () => {
+      isActive = false;
+    };
+  }, [file, hasHeader]);
 
   if (role !== 'data_source') {
     return (
@@ -158,14 +260,23 @@ export default function DataSourceWorkspace() {
               </div>
 
               <div className="grid gap-6 md:grid-cols-2">
-                <Input
-                  label="Label Column"
-                  type="text"
-                  value={labelColumn}
-                  onChange={(event) => setLabelColumn(event.target.value)}
-                  placeholder="last, 0, outcome"
-                  required
-                />
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--text-muted)]">
+                    Label Column
+                  </label>
+                  <select
+                    value={labelColumn}
+                    onChange={(event) => setLabelColumn(event.target.value)}
+                    className="w-full appearance-none rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm text-white transition-colors focus:border-[var(--accent-cyan)] focus:outline-none"
+                    required
+                  >
+                    {labelOptions.map((option) => (
+                      <option key={`${option.value}-${option.label}`} value={option.value} className="bg-slate-950 text-white">
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--text-muted)]">
                     CSV Header
@@ -211,7 +322,10 @@ export default function DataSourceWorkspace() {
                       type="file"
                       accept=".csv,text/csv"
                       className="hidden"
-                      onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                      onChange={(event) => {
+                        setFile(event.target.files?.[0] ?? null);
+                        setLabelColumn('last');
+                      }}
                     />
                   </label>
                 </div>
