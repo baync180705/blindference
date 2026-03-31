@@ -45,6 +45,8 @@ export default function InferencePortal({ model }: { model: Model }) {
     ensureFhenixClient,
     contracts,
     paymentTokenAddress,
+    paymentTokenName,
+    paymentTokenDecimals,
     inferenceEngineAddress,
   } = useWeb3();
 
@@ -114,21 +116,21 @@ export default function InferencePortal({ model }: { model: Model }) {
       });
 
       const fee = (await activeRegistry.getInferenceFee(selectedModelId)) as bigint;
-      const formattedFee = formatUnits(fee, 18);
+      const formattedFee = formatUnits(fee, paymentTokenDecimals);
       setInferenceFee(formattedFee);
-      addLog(`Fetched inference fee for model ${selectedModelId.toString()}: ${formattedFee} BFHE`);
+      addLog(`Fetched inference fee for model ${selectedModelId.toString()}: ${formattedFee} ${paymentTokenName}`);
 
       const allowance = (await activePaymentToken.allowance(activeAddress, inferenceEngineAddress)) as bigint;
 
       if (allowance < fee) {
         setStatus('approving');
-        addLog(`Allowance is insufficient. Prompting approval for ${formattedFee} BFHE...`);
+        addLog(`Allowance is insufficient. Setting approval to the exact required amount: ${formattedFee} ${paymentTokenName}.`);
         const approvalTx = await activePaymentToken.approve(inferenceEngineAddress, fee);
         addLog(`Approval submitted: ${approvalTx.hash}`);
         await approvalTx.wait();
-        addLog('Token approval confirmed.');
+        addLog(`Token approval confirmed at ${formattedFee} ${paymentTokenName}.`);
       } else {
-        addLog('Existing token allowance is sufficient.');
+        addLog(`Existing ${paymentTokenName} allowance is sufficient.`);
       }
 
       setStatus('encrypting');
@@ -254,7 +256,7 @@ export default function InferencePortal({ model }: { model: Model }) {
             <p className="text-[var(--text-muted)]">
               {role === 'ai_lab'
                 ? 'Preview the buyer-side blind inference flow your customers will experience when they submit encrypted inputs.'
-                : 'Data Sources approve BFHE spend, encrypt sensitive features locally, and only the requester can unseal the final score.'}
+                : `Data Sources approve ${paymentTokenName} spend, encrypt sensitive features locally, and only the requester can unseal the final score.`}
             </p>
           </div>
         </div>
@@ -315,8 +317,8 @@ export default function InferencePortal({ model }: { model: Model }) {
 
             <div className="rounded-xl border border-white/10 bg-[var(--bg-secondary)]/30 px-4 py-3 text-sm text-[var(--text-muted)]">
               <div>Selected model: {model.name}</div>
-              <div>Payment token: {paymentTokenAddress ?? 'Not configured'}</div>
-              <div>Inference fee: {inferenceFee ? `${inferenceFee} BFHE` : 'Will be fetched before submit'}</div>
+              <div>Payment token: {paymentTokenAddress ? `${paymentTokenName} (${paymentTokenAddress})` : `${paymentTokenName} (Not configured)`}</div>
+              <div>Inference fee: {inferenceFee ? `${inferenceFee} ${paymentTokenName}` : 'Will be fetched before submit'}</div>
             </div>
 
             <div className="pt-4 flex items-center justify-between border-t border-[var(--bg-secondary)]">
@@ -348,7 +350,7 @@ export default function InferencePortal({ model }: { model: Model }) {
               </motion.div>
               <h3 className="text-xl font-bold neon-text">
                 {status === 'approving'
-                  ? 'Authorizing BFHE Spend'
+                  ? `Authorizing ${paymentTokenName} Spend`
                   : status === 'encrypting'
                     ? 'Encrypting Patient Data'
                     : 'Submitting Inference'}

@@ -50,7 +50,7 @@ export type DatasetManifest = {
 export type TrainedModelRecord = {
   model_id: string;
   dataset_id: string;
-  file_id: string;
+  file_id?: string | null;
   lab_address: string;
   name: string;
   description?: string | null;
@@ -62,6 +62,12 @@ export type TrainedModelRecord = {
   filename: string;
   original_filename?: string | null;
   on_chain_model_id?: string | null;
+  tx_hash?: string | null;
+  metadata_uri?: string | null;
+  registry_reference?: string | null;
+  weight_count?: number | null;
+  feature_names?: string[] | null;
+  scale?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -224,6 +230,39 @@ export async function uploadModelArtifact(
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || 'Failed to upload encrypted model artifact');
+  }
+
+  return response.json() as Promise<TrainedModelRecord>;
+}
+
+export async function publishModelRecord(
+  jwt: string,
+  payload: {
+    dataset_id: string;
+    name: string;
+    description?: string;
+    price_bfhe?: string;
+    status?: string;
+    on_chain_model_id: string;
+    tx_hash?: string;
+    original_filename?: string;
+    artifact_sha256?: string;
+    metadata_uri?: string;
+    registry_reference?: string;
+    weight_count?: number;
+    feature_names?: string[];
+    scale?: number;
+  },
+): Promise<TrainedModelRecord> {
+  const response = await fetch(`${BACKEND_BASE_URL}/api/v1/models/publish`, {
+    method: 'POST',
+    headers: authHeaders(jwt),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || 'Failed to persist published model metadata');
   }
 
   return response.json() as Promise<TrainedModelRecord>;

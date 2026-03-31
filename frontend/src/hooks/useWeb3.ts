@@ -38,6 +38,8 @@ type Web3ContextValue = {
   connectionError: string | null;
   contracts: Web3Contracts;
   paymentTokenAddress: string | null;
+  paymentTokenName: string;
+  paymentTokenDecimals: number;
   inferenceEngineAddress: string | null;
   isConnecting: boolean;
   isInitializingFhe: boolean;
@@ -78,6 +80,8 @@ const inferenceEngineAddress =
 const modelRegistryAddress = import.meta.env.VITE_MODEL_REGISTRY_ADDRESS as string | undefined;
 const paymentEscrowAddress = import.meta.env.VITE_PAYMENT_ESCROW_ADDRESS as string | undefined;
 const paymentTokenAddress = import.meta.env.VITE_PAYMENT_TOKEN_ADDRESS as string | undefined;
+const paymentTokenName = (import.meta.env.VITE_PAYMENT_TOKEN_NAME as string | undefined) ?? 'USDC';
+const paymentTokenDecimals = Number(import.meta.env.VITE_PAYMENT_TOKEN_DECIMALS ?? '6');
 
 const defaultContracts: Web3Contracts = {
   blindInference: null,
@@ -454,6 +458,8 @@ export function Web3Provider({ children }: { children: ReactNode }) {
       connectionError,
       contracts,
       paymentTokenAddress: paymentTokenAddress ?? null,
+      paymentTokenName,
+      paymentTokenDecimals,
       inferenceEngineAddress: inferenceEngineAddress ?? null,
       isConnecting,
       isInitializingFhe,

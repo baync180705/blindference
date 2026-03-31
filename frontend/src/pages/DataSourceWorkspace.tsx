@@ -30,7 +30,7 @@ function formatShortHash(value?: string | null) {
 }
 
 export default function DataSourceWorkspace() {
-  const { address, role, jwt } = useWeb3();
+  const { address, role, jwt, paymentTokenName } = useWeb3();
   const [labelColumn, setLabelColumn] = useState('last');
   const [hasHeader, setHasHeader] = useState(true);
   const [notes, setNotes] = useState('');
@@ -337,7 +337,7 @@ export default function DataSourceWorkspace() {
                           <div key={model.model_id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
                             <div className="text-xs font-bold text-white">{model.name}</div>
                             <div className="mt-1 text-[10px] uppercase tracking-widest text-white/45">
-                              {model.price_bfhe ? `${model.price_bfhe} BFHE` : 'Unpriced'} {model.on_chain_model_id ? `// On-chain ${model.on_chain_model_id}` : ''}
+                              {model.price_bfhe ? `${model.price_bfhe} ${paymentTokenName}` : 'Unpriced'} {model.on_chain_model_id ? `// On-chain ${model.on_chain_model_id}` : ''}
                             </div>
                           </div>
                         ))

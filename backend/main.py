@@ -89,11 +89,28 @@ class SubmissionPayload(BaseModel):
     plaintext_result: str | None = None
 
 
+class PublishedModelPayload(BaseModel):
+    dataset_id: str
+    name: str
+    description: str | None = None
+    price_bfhe: str | None = None
+    status: str = "published_on_chain"
+    on_chain_model_id: str
+    tx_hash: str | None = None
+    original_filename: str | None = None
+    artifact_sha256: str | None = None
+    metadata_uri: str | None = None
+    registry_reference: str | None = None
+    weight_count: int | None = None
+    feature_names: list[str] | None = None
+    scale: float | None = None
+
+
 def serialize_linked_model(document: dict) -> dict:
     return {
         "model_id": str(document["_id"]),
         "dataset_id": document["dataset_id"],
-        "file_id": document["file_id"],
+        "file_id": document.get("file_id"),
         "lab_address": document["lab_address"],
         "name": document["name"],
         "description": document.get("description"),
@@ -105,6 +122,12 @@ def serialize_linked_model(document: dict) -> dict:
         "filename": document["filename"],
         "original_filename": document.get("original_filename"),
         "on_chain_model_id": document.get("on_chain_model_id"),
+        "tx_hash": document.get("tx_hash"),
+        "metadata_uri": document.get("metadata_uri"),
+        "registry_reference": document.get("registry_reference"),
+        "weight_count": document.get("weight_count"),
+        "feature_names": document.get("feature_names"),
+        "scale": document.get("scale"),
         "created_at": document["created_at"],
         "updated_at": document["updated_at"],
     }
@@ -200,15 +223,17 @@ async def maybe_await(result):
 
 
 def parse_label_column(label_column: str, header: list[str] | None, column_count: int) -> int:
-    normalized = label_column.strip()
+    normalized = normalize_column_selector(label_column)
     if normalized == "":
         raise HTTPException(status_code=400, detail="label_column cannot be empty")
 
-    if normalized.lower() == "last":
+    if normalized == "last":
         return column_count - 1
 
-    if header is not None and normalized in header:
-        return header.index(normalized)
+    if header is not None:
+        normalized_header = [normalize_column_selector(column_name) for column_name in header]
+        if normalized in normalized_header:
+            return normalized_header.index(normalized)
 
     try:
         label_index = int(normalized)
@@ -222,6 +247,13 @@ def parse_label_column(label_column: str, header: list[str] | None, column_count
         raise HTTPException(status_code=400, detail="label_column is out of range")
 
     return label_index
+
+
+def normalize_column_selector(value: str) -> str:
+    trimmed = value.strip().lstrip("\ufeff")
+    if len(trimmed) >= 2 and trimmed[0] == trimmed[-1] and trimmed[0] in {'"', "'"}:
+        trimmed = trimmed[1:-1].strip()
+    return trimmed.casefold()
 
 
 def build_dataset_encryption_request(
@@ -903,11 +935,11 @@ async def encrypt_and_upload_dataset(
     }
 
     result = await app.state.db.dataset_manifests.insert_one(manifest)
+    inserted_manifest = await app.state.db.dataset_manifests.find_one({"_id": result.inserted_id})
+    if inserted_manifest is None:
+        raise HTTPException(status_code=500, detail="failed to persist dataset manifest")
 
-    return {
-        "dataset_id": str(result.inserted_id),
-        **manifest,
-    }
+    return serialize_dataset_manifest(inserted_manifest, [])
 
 
 @app.get("/api/v1/dataset/download/{file_id}", tags=["dataset"])
@@ -1057,11 +1089,100 @@ async def upload_model_artifact(
         {"_id": dataset_object_id},
         {"$set": {"updated_at": now}},
     )
+    inserted_model = await app.state.db.model_artifacts.find_one({"_id": result.inserted_id})
+    if inserted_model is None:
+        raise HTTPException(status_code=500, detail="failed to persist model artifact metadata")
 
-    return {
-        "model_id": str(result.inserted_id),
-        **document,
+    return serialize_linked_model(inserted_model)
+
+
+@app.post("/api/v1/models/publish", tags=["models"])
+async def publish_model_record(
+    payload: PublishedModelPayload,
+    authorization: str | None = Header(default=None),
+):
+    token_payload = decode_access_token(authorization)
+    require_role(token_payload, "ai_lab")
+    lab_address = normalize_address(token_payload["sub"])
+
+    try:
+        dataset_object_id = ObjectId(payload.dataset_id)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="invalid dataset_id") from error
+
+    dataset = await app.state.db.dataset_manifests.find_one({"_id": dataset_object_id})
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="linked dataset not found")
+    if dataset.get("visibility") != "ai_labs" and dataset.get("lab_address") != lab_address:
+        raise HTTPException(status_code=403, detail="dataset is not available to this AI lab")
+    if dataset.get("artifact_type") != "ppml_encrypted_dataset":
+        raise HTTPException(status_code=400, detail="linked dataset is not a PPML-compatible dataset artifact")
+
+    trimmed_name = payload.name.strip()
+    if trimmed_name == "":
+        raise HTTPException(status_code=400, detail="model name is required")
+
+    trimmed_status = payload.status.strip() or "published_on_chain"
+    trimmed_description = payload.description.strip() if payload.description else None
+    trimmed_price = payload.price_bfhe.strip() if payload.price_bfhe else None
+    trimmed_on_chain_model_id = payload.on_chain_model_id.strip()
+    if trimmed_on_chain_model_id == "":
+        raise HTTPException(status_code=400, detail="on_chain_model_id is required")
+
+    existing_model = await app.state.db.model_artifacts.find_one(
+        {
+            "lab_address": lab_address,
+            "on_chain_model_id": trimmed_on_chain_model_id,
+        }
+    )
+    if existing_model is not None:
+        raise HTTPException(status_code=409, detail="this on-chain model id is already linked to a published model record")
+
+    registry_reference = payload.registry_reference.strip() if payload.registry_reference else trimmed_name
+    metadata_uri = payload.metadata_uri.strip() if payload.metadata_uri else None
+    original_filename = payload.original_filename.strip() if payload.original_filename else None
+    artifact_sha256 = payload.artifact_sha256.strip() if payload.artifact_sha256 else None
+    tx_hash = payload.tx_hash.strip() if payload.tx_hash else None
+
+    feature_names = None
+    if payload.feature_names:
+        feature_names = [feature_name.strip() for feature_name in payload.feature_names if feature_name.strip() != ""]
+
+    now = datetime.now(timezone.utc)
+    document = {
+        "dataset_id": payload.dataset_id,
+        "file_id": None,
+        "lab_address": lab_address,
+        "name": trimmed_name,
+        "description": trimmed_description,
+        "price_bfhe": trimmed_price,
+        "status": trimmed_status,
+        "artifact_type": "cofhe_frontend_published_model",
+        "artifact_sha256": artifact_sha256,
+        "content_type": "application/json",
+        "filename": original_filename or f"{trimmed_name}.json",
+        "original_filename": original_filename,
+        "on_chain_model_id": trimmed_on_chain_model_id,
+        "tx_hash": tx_hash,
+        "metadata_uri": metadata_uri,
+        "registry_reference": registry_reference,
+        "weight_count": payload.weight_count,
+        "feature_names": feature_names,
+        "scale": payload.scale,
+        "created_at": now,
+        "updated_at": now,
     }
+
+    result = await app.state.db.model_artifacts.insert_one(document)
+    await app.state.db.dataset_manifests.update_one(
+        {"_id": dataset_object_id},
+        {"$set": {"updated_at": now}},
+    )
+    inserted_model = await app.state.db.model_artifacts.find_one({"_id": result.inserted_id})
+    if inserted_model is None:
+        raise HTTPException(status_code=500, detail="failed to persist published model metadata")
+
+    return serialize_linked_model(inserted_model)
 
 
 @app.get("/api/v1/models/by-lab/{address}", tags=["models"])
