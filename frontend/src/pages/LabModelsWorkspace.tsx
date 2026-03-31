@@ -39,6 +39,7 @@ export default function LabModelsWorkspace({ initialDatasetId }: { initialDatase
     ensureFhenixClient,
     contracts,
     isInitializingFhe,
+    paymentTokenName,
   } = useWeb3();
   const [datasets, setDatasets] = useState<DatasetManifest[]>([]);
   const [models, setModels] = useState<TrainedModelRecord[]>([]);
@@ -311,7 +312,7 @@ export default function LabModelsWorkspace({ initialDatasetId }: { initialDatase
                 />
 
                 <Input
-                  label="Price (BFHE)"
+                  label={`Price (${paymentTokenName})`}
                   type="text"
                   value={price}
                   onChange={(event) => setPrice(event.target.value)}
@@ -493,7 +494,7 @@ export default function LabModelsWorkspace({ initialDatasetId }: { initialDatase
                     <div>Owner {truncateAddress(model.lab_address)}</div>
                     <div>Source {model.original_filename ?? model.filename}</div>
                     <div>Weights {model.weight_count ?? 'n/a'} {model.scale ? `// scale ${model.scale}` : ''}</div>
-                    <div>{model.price_bfhe ? `${model.price_bfhe} BFHE` : 'No price metadata'} {model.tx_hash ? `// Tx ${model.tx_hash.slice(0, 10)}...` : ''}</div>
+                    <div>{model.price_bfhe ? `${model.price_bfhe} ${paymentTokenName}` : 'No price metadata'} {model.tx_hash ? `// Tx ${model.tx_hash.slice(0, 10)}...` : ''}</div>
                   </div>
                 </div>
               );

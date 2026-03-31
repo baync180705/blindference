@@ -9,7 +9,7 @@ import { isIpfsUri } from '../services/ipfsProfileService';
 import { getIncomingDatasets, getIncomingSubmissions, type DatasetManifest, type SubmissionRecord } from '../services/workspaceService';
 
 export default function LabDashboard() {
-  const { address, role, jwt, connect, contracts } = useWeb3();
+  const { address, role, jwt, connect, contracts, paymentTokenName, paymentTokenDecimals } = useWeb3();
   const [profileURI, setProfileURI] = useState('');
   const [isActivatingLab, setIsActivatingLab] = useState(false);
   const [isCheckingLabStatus, setIsCheckingLabStatus] = useState(false);
@@ -430,7 +430,7 @@ export default function LabDashboard() {
                       <div className="mt-1 text-xs text-[var(--text-muted)]">Model ID {model.modelId.toString()}</div>
                     </div>
                     <div className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[var(--accent-cyan)]">
-                      {formatUnits(model.fee, 18)} BFHE
+                      {formatUnits(model.fee, paymentTokenDecimals)} {paymentTokenName}
                     </div>
                   </div>
                   <div className="mt-4 text-xs font-mono text-white/40">

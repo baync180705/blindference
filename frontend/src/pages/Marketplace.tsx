@@ -14,7 +14,7 @@ type RegistryModel = Model & {
 const FALLBACK_MODEL_ID = BigInt(import.meta.env.VITE_DEFAULT_MODEL_ID ?? '1');
 
 export default function Marketplace({ onSelectModel }: { onSelectModel: (model: Model) => void }) {
-  const { address, role, connect, contracts } = useWeb3();
+  const { address, role, connect, contracts, paymentTokenName, paymentTokenDecimals } = useWeb3();
   const [models, setModels] = useState<RegistryModel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +52,7 @@ export default function Marketplace({ onSelectModel }: { onSelectModel: (model: 
               contracts.modelRegistry.getIpfsHash(modelId) as Promise<string>,
             ]);
 
-            const formattedFee = Number(formatUnits(inferenceFee, 18));
+            const formattedFee = Number(formatUnits(inferenceFee, paymentTokenDecimals));
             nextModels.push({
               id: `MOD-${modelId.toString().padStart(3, '0')}`,
               modelId,
@@ -158,7 +158,7 @@ export default function Marketplace({ onSelectModel }: { onSelectModel: (model: 
                     </div>
                   </div>
                 </div>
-                <div className="font-mono text-[var(--accent-cyan)] font-bold">{formatUnits(model.inferenceFeeRaw, 18)} BFHE</div>
+                <div className="font-mono text-[var(--accent-cyan)] font-bold">{formatUnits(model.inferenceFeeRaw, paymentTokenDecimals)} {paymentTokenName}</div>
                 <div className="text-[10px] font-mono text-white/40 uppercase tracking-widest">{model.labAddress}</div>
                 <div className="text-right">
                   <Button variant="outline" size="sm" onClick={() => onSelectModel(model)}>

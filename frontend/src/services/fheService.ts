@@ -2,6 +2,8 @@ import type { CofheClient, EncryptedUint32Input } from '@cofhe/sdk';
 import type { BrowserProvider, Contract, ContractTransactionReceipt } from 'ethers';
 import { parseUnits } from 'ethers';
 
+const PAYMENT_TOKEN_DECIMALS = Number(import.meta.env.VITE_PAYMENT_TOKEN_DECIMALS ?? '6');
+
 type LegacyFhenixClientLike = {
   unseal: (contractAddress: string, ciphertext: string, account: string) => bigint;
 };
@@ -137,7 +139,7 @@ export async function unsealInferenceResult(
 
 export function toPriceUnits(price: string): bigint {
   const normalized = price.trim() === '' ? '0' : price.trim();
-  return parseUnits(normalized, 18);
+  return parseUnits(normalized, PAYMENT_TOKEN_DECIMALS);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

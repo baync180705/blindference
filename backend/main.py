@@ -223,15 +223,17 @@ async def maybe_await(result):
 
 
 def parse_label_column(label_column: str, header: list[str] | None, column_count: int) -> int:
-    normalized = label_column.strip()
+    normalized = normalize_column_selector(label_column)
     if normalized == "":
         raise HTTPException(status_code=400, detail="label_column cannot be empty")
 
-    if normalized.lower() == "last":
+    if normalized == "last":
         return column_count - 1
 
-    if header is not None and normalized in header:
-        return header.index(normalized)
+    if header is not None:
+        normalized_header = [normalize_column_selector(column_name) for column_name in header]
+        if normalized in normalized_header:
+            return normalized_header.index(normalized)
 
     try:
         label_index = int(normalized)
@@ -245,6 +247,13 @@ def parse_label_column(label_column: str, header: list[str] | None, column_count
         raise HTTPException(status_code=400, detail="label_column is out of range")
 
     return label_index
+
+
+def normalize_column_selector(value: str) -> str:
+    trimmed = value.strip().lstrip("\ufeff")
+    if len(trimmed) >= 2 and trimmed[0] == trimmed[-1] and trimmed[0] in {'"', "'"}:
+        trimmed = trimmed[1:-1].strip()
+    return trimmed.casefold()
 
 
 def build_dataset_encryption_request(

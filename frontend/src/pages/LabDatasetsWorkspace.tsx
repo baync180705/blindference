@@ -28,7 +28,7 @@ function shortHash(hash?: string | null) {
 }
 
 export default function LabDatasetsWorkspace({ onOpenModels }: { onOpenModels?: (datasetId: string) => void }) {
-  const { role, jwt } = useWeb3();
+  const { role, jwt, paymentTokenName } = useWeb3();
   const [datasets, setDatasets] = useState<DatasetManifest[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeDownloadId, setActiveDownloadId] = useState<string | null>(null);
@@ -196,7 +196,7 @@ export default function LabDatasetsWorkspace({ onOpenModels }: { onOpenModels?: 
                           >
                             <div className="text-xs font-bold text-white">{model.name}</div>
                             <div className="mt-1 text-[10px] uppercase tracking-widest text-white/45">
-                              {truncateAddress(model.lab_address)} {model.price_bfhe ? `// ${model.price_bfhe} BFHE` : ''} {model.on_chain_model_id ? `// On-chain ${model.on_chain_model_id}` : ''}
+                              {truncateAddress(model.lab_address)} {model.price_bfhe ? `// ${model.price_bfhe} ${paymentTokenName}` : ''} {model.on_chain_model_id ? `// On-chain ${model.on_chain_model_id}` : ''}
                             </div>
                           </div>
                         ))
