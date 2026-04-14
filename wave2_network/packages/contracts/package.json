@@ -1,0 +1,28 @@
+{
+  "name": "contracts",
+  "version": "1.0.0",
+  "description": "Blindference Wave 2 contracts package",
+  "private": true,
+  "scripts": {
+    "compile": "XDG_CACHE_HOME=$PWD/.cache hardhat compile",
+    "test": "XDG_CACHE_HOME=$PWD/.cache hardhat test"
+  },
+  "keywords": [
+    "blindference",
+    "hardhat",
+    "solidity"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
+    "@nomicfoundation/hardhat-verify": "^3.0.13",
+    "@openzeppelin/contracts": "^5.0.2",
+    "@types/node": "^25.6.0",
+    "dotenv": "^17.4.2",
+    "hardhat": "^3.3.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
+  }
+}

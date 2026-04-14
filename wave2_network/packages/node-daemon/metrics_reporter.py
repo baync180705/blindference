@@ -1,0 +1,2 @@
+class MetricsReporter:
+    pass
