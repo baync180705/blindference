@@ -15,7 +15,7 @@ const navLinks = [
   { to: '/', label: 'Home' },
   { to: '/models', label: 'Models' },
   { to: '/nodes', label: 'Nodes' },
-  { to: '/inference/new', label: 'New Inference' },
+  { to: '/inference/new', label: 'Request Signal' },
   { to: '/coverage', label: 'Coverage' },
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/node/join', label: 'Join Node' },
@@ -23,10 +23,10 @@ const navLinks = [
 
 export default function App() {
   return (
-    <div className="min-h-screen text-slate-100">
-      <header className="border-b border-slate-800 bg-slate-950/70 backdrop-blur">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.22),_transparent_38%),linear-gradient(180deg,_#07111f,_#020617_58%,_#041521)] text-slate-100">
+      <header className="border-b border-slate-800/80 bg-slate-950/60 backdrop-blur-xl">
         <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-6 py-4">
-          <span className="text-lg font-semibold">Blindference Wave 2</span>
+          <span className="text-lg font-semibold tracking-wide">Blindference Wave 2</span>
           {navLinks.map((link) => (
             <Link key={link.to} className="text-sm text-slate-300 hover:text-white" to={link.to}>
               {link.label}

@@ -1,0 +1,25 @@
+{
+  "name": "@blindference/blindference-demo",
+  "version": "0.1.0",
+  "private": true,
+  "license": "BUSL-1.1",
+  "description": "Buildathon demo: insured AI output agent built on Blindference + Reineira underwriting",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test -vv",
+    "test:gas": "forge test --gas-report",
+    "format": "forge fmt",
+    "lint": "solhint \"contracts/**/*.sol\" \"test/**/*.sol\"",
+    "clean": "forge clean"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "~5.2.0",
+    "@openzeppelin/contracts-upgradeable": "~5.2.0",
+    "@fhenixprotocol/cofhe-contracts": "0.0.13",
+    "@fhenixprotocol/cofhe-mock-contracts": "^0.3.1"
+  },
+  "devDependencies": {
+    "forge-std": "github:foundry-rs/forge-std",
+    "solhint": "^5.0.0"
+  }
+}

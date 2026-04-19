@@ -1,0 +1,58 @@
+[profile.default]
+src = "contracts"
+out = "out"
+libs = ["node_modules", "../../node_modules"]
+test = "test"
+solc_version = "0.8.28"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+ffi = false
+ast = true
+build_info = true
+extra_output = ["storageLayout"]
+fs_permissions = [{ access = "read", path = "./" }]
+remappings = [
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "@openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/",
+  "@fhenixprotocol/cofhe-contracts/=node_modules/@fhenixprotocol/cofhe-contracts/",
+  "@fhenixprotocol/cofhe-mock-contracts/=node_modules/@fhenixprotocol/cofhe-mock-contracts/",
+  "forge-std/=node_modules/forge-std/src/",
+  "hardhat/=node_modules/forge-std/src/",
+
+  # === TECH DEBT (chaosenet) ===
+  # Reineira is private today. The three Reineira artifacts we depend on
+  # (TestnetCoreBase, FHEMeta, IEscrow) are vendored under
+  # contracts/_reineira_stubs/. At chaosenet, run `forge install
+  # reineira-os/shared` and switch this remapping to lib/shared/, then
+  # delete contracts/_reineira_stubs/ entirely.
+  #
+  # Target state — uncomment after `forge install reineira-os/shared`:
+  # "@reineira-os/shared/=lib/shared/"
+  #
+  # Vendored stubs (current, tech debt):
+  "@reineira-os/shared/=contracts/_reineira_stubs/"
+]
+
+[profile.ci]
+fuzz = { runs = 1000 }
+
+[rpc_endpoints]
+anvil = "${ANVIL_RPC_URL}"
+arbitrumSepolia = "${ARBITRUM_SEPOLIA_RPC_URL}"
+
+[etherscan]
+arbitrumSepolia = { key = "${ETHERSCAN_API_KEY}" }
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+quote_style = "double"
+number_underscore = "preserve"
+multiline_func_header = "attributes_first"
+single_line_statement_blocks = "multi"
+override_spacing = false
+wrap_comments = false
+ignore = ["contracts/_reineira_stubs/**"]

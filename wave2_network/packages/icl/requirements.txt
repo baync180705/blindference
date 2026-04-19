@@ -7,3 +7,5 @@ eth-account
 pydantic-settings
 python-dotenv
 httpx
+pytest
+pytest-asyncio
