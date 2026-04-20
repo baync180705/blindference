@@ -15,7 +15,7 @@ class ModelRegistryService:
     async def ensure_default_models(self) -> None:
         defaults = [
             ModelCatalogRecord(
-                model_id="groq-llm-default",
+                model_id="groq:llama-3.3-70b-versatile",
                 name="Groq Hosted LLM",
                 provider="groq",
                 min_tier=1,
@@ -23,7 +23,7 @@ class ModelRegistryService:
                 metadata={"mode": "hosted-api", "agent_id": 1, "protocol_registry": "AgentConfigRegistry"},
             ),
             ModelCatalogRecord(
-                model_id="gemini-llm-default",
+                model_id="gemini:gemini-2.5-flash",
                 name="Google Gemini Hosted LLM",
                 provider="google-gemini",
                 min_tier=1,

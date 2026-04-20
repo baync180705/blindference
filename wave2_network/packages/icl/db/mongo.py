@@ -15,6 +15,7 @@ from db.collections import (
     INFERENCE_REQUESTS,
     MODEL_CATALOG,
     OPERATORS,
+    PERMITS,
     QUORUM_ASSIGNMENTS,
     QUORUM_CERTIFICATES,
     VERIFIER_VERDICTS,
@@ -133,6 +134,7 @@ async def ensure_indexes(database: AsyncIOMotorDatabase) -> None:
     await database[MODEL_CATALOG].create_index([("model_id", ASCENDING)], unique=True)
     await database[DISPUTES].create_index([("request_id", ASCENDING)], unique=True)
     await database[OPERATORS].create_index([("operator_address", ASCENDING)], unique=True)
+    await database[PERMITS].create_index([("task_id", ASCENDING)], unique=True)
 
 
 async def ping_database(database: AsyncIOMotorDatabase) -> bool:

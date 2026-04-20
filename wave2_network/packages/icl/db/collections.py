@@ -5,6 +5,7 @@ QUORUM_CERTIFICATES = "quorum_certificates"
 MODEL_CATALOG = "model_catalog"
 DISPUTES = "disputes"
 OPERATORS = "operators"
+PERMITS = "permits"
 
 
 def get_collection_names() -> list[str]:
@@ -16,4 +17,5 @@ def get_collection_names() -> list[str]:
         MODEL_CATALOG,
         DISPUTES,
         OPERATORS,
+        PERMITS,
     ]

@@ -47,6 +47,9 @@ class Web3Client:
     def keccak_text(self, value: str) -> str:
         return Web3.keccak(text=value).hex()
 
+    def keccak_uint256(self, value: int) -> str:
+        return Web3.solidity_keccak(["uint256"], [int(value)]).hex()
+
     def task_id_to_invocation_id(self, task_id: str) -> int:
         normalized = task_id[2:] if task_id.startswith("0x") else task_id
         return int(normalized, 16)

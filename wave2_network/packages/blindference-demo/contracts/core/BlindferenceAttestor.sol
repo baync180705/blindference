@@ -30,10 +30,9 @@ contract BlindferenceAttestor is TestnetCoreBase, IBlindferenceAttestor {
 
     function commitInferenceOutput(
         uint256 invocationId,
-        bytes32 asset,
-        Recommendation recommendation,
+        bytes32 loanIdHash,
+        uint8 riskScore,
         uint16 confidenceBps,
-        int256 priceAtIssue,
         uint64 validUntil,
         address agent,
         bytes32 responseHash,
@@ -54,10 +53,9 @@ contract BlindferenceAttestor is TestnetCoreBase, IBlindferenceAttestor {
 
         bytes32 expected = _outputDigest(
             responseHash,
-            asset,
-            recommendation,
+            loanIdHash,
+            riskScore,
             confidenceBps,
-            priceAtIssue,
             validUntil,
             agent,
             modelKey
@@ -68,10 +66,9 @@ contract BlindferenceAttestor is TestnetCoreBase, IBlindferenceAttestor {
 
         l.outputs[invocationId] = InferenceOutput({
             invocationId: invocationId,
-            asset: asset,
-            recommendation: recommendation,
+            loanIdHash: loanIdHash,
+            riskScore: riskScore,
             confidenceBps: confidenceBps,
-            priceAtIssue: priceAtIssue,
             issuedAt: uint64(block.timestamp),
             validUntil: validUntil,
             agent: agent,
@@ -81,10 +78,9 @@ contract BlindferenceAttestor is TestnetCoreBase, IBlindferenceAttestor {
 
         emit InferenceOutputCommitted(
             invocationId,
-            asset,
-            recommendation,
+            loanIdHash,
+            riskScore,
             confidenceBps,
-            priceAtIssue,
             validUntil,
             agent,
             responseHash,
@@ -102,30 +98,26 @@ contract BlindferenceAttestor is TestnetCoreBase, IBlindferenceAttestor {
 
     function outputDigest(
         bytes32 responseHash,
-        bytes32 asset,
-        Recommendation recommendation,
+        bytes32 loanIdHash,
+        uint8 riskScore,
         uint16 confidenceBps,
-        int256 priceAtIssue,
         uint64 validUntil,
         address agent,
         bytes32 modelKey
     ) external pure returns (bytes32) {
-        return _outputDigest(responseHash, asset, recommendation, confidenceBps, priceAtIssue, validUntil, agent, modelKey);
+        return _outputDigest(responseHash, loanIdHash, riskScore, confidenceBps, validUntil, agent, modelKey);
     }
 
     function _outputDigest(
         bytes32 responseHash,
-        bytes32 asset,
-        Recommendation recommendation,
+        bytes32 loanIdHash,
+        uint8 riskScore,
         uint16 confidenceBps,
-        int256 priceAtIssue,
         uint64 validUntil,
         address agent,
         bytes32 modelKey
     ) private pure returns (bytes32) {
-        return keccak256(
-            abi.encode(responseHash, asset, recommendation, confidenceBps, priceAtIssue, validUntil, agent, modelKey)
-        );
+        return keccak256(abi.encode(responseHash, loanIdHash, riskScore, confidenceBps, validUntil, agent, modelKey));
     }
 
     function _layout() private pure returns (Layout storage l) {

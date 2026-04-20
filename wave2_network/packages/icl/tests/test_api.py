@@ -20,18 +20,90 @@ async def bootstrap_nodes(client) -> list[dict]:
     return nodes
 
 
-async def create_request(client, *, prompt: str, min_tier: int = 0) -> dict:
+def build_encrypted_features(tag: str) -> tuple[list[dict[str, str]], list[str]]:
+    return (
+        [
+            {"ctHash": f"ct-credit-{tag}", "utype": "uint32", "signature": f"sig-credit-{tag}"},
+            {"ctHash": f"ct-amount-{tag}", "utype": "uint64", "signature": f"sig-amount-{tag}"},
+            {"ctHash": f"ct-age-{tag}", "utype": "uint32", "signature": f"sig-age-{tag}"},
+            {"ctHash": f"ct-defaults-{tag}", "utype": "uint8", "signature": f"sig-defaults-{tag}"},
+        ],
+        ["uint32", "uint64", "uint32", "uint8"],
+    )
+
+
+async def create_request(client, *, request_tag: str, min_tier: int = 0) -> dict:
     http_client, _app = client
+    encrypted_features, feature_types = build_encrypted_features(request_tag)
     response = await http_client.post(
         "/v1/inference/requests",
         json={
             "developer_address": DEVELOPER_ADDRESS,
-            "model_id": "groq-llm-default",
-            "prompt": prompt,
+            "model_id": "groq:llama-3.3-70b-versatile",
+            "encrypted_features": encrypted_features,
+            "feature_types": feature_types,
+            "loan_id": f"loan-{request_tag}",
+            "coverage_type": "HALLUCINATION",
+            "max_fee_gnk": 100,
             "min_tier": min_tier,
             "zdr_required": False,
             "verifier_count": 2,
-            "metadata": {"provider": "groq", "request_tag": prompt},
+            "metadata": {"provider": "groq", "request_tag": request_tag},
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+async def create_request_with_quorum_permits(client, *, request_tag: str) -> dict:
+    http_client, _app = client
+    preview_response = await http_client.get(
+        "/v1/inference/quorum-preview",
+        params={"model_id": "groq:llama-3.3-70b-versatile", "min_tier": 0, "verifier_count": 2},
+    )
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+
+    encrypted_features, feature_types = build_encrypted_features(request_tag)
+    permits = [
+        {"node": preview["leader"], "permit": {"mock": True, "node": preview["leader"]}},
+        *[
+            {"node": verifier, "permit": {"mock": True, "node": verifier}}
+            for verifier in preview["verifiers"]
+        ],
+    ]
+
+    response = await http_client.post(
+        "/v1/inference/requests",
+        json={
+            "developer_address": DEVELOPER_ADDRESS,
+            "model_id": "groq:llama-3.3-70b-versatile",
+            "encrypted_input": encrypted_features,
+            "permits": permits,
+            "feature_types": feature_types,
+            "loan_id": f"loan-{request_tag}",
+            "coverage_type": "HALLUCINATION",
+            "max_fee_gnk": 100,
+            "min_tier": 0,
+            "zdr_required": False,
+            "verifier_count": 2,
+            "metadata": {"provider": "groq", "request_tag": request_tag},
+        },
+    )
+    assert response.status_code == 200
+    created = response.json()
+    assert created["leader_address"] == preview["leader"]
+    assert created["quorum"]["verifier_addresses"] == preview["verifiers"]
+    assert len(created["metadata"]["permits"]) == 3
+    return created
+
+
+async def attach_permit(client, *, task_id: str, leader_address: str) -> dict:
+    http_client, _app = client
+    response = await http_client.patch(
+        f"/v1/inference/{task_id}/permit",
+        json={
+            "permit": f"serialized-permit-for:{leader_address}:{task_id}",
         },
     )
     assert response.status_code == 200
@@ -83,7 +155,7 @@ async def test_models_endpoint_exposes_defaults_and_registration(client) -> None
     list_response = await http_client.get("/v1/models")
     assert list_response.status_code == 200
     model_ids = {model["model_id"] for model in list_response.json()}
-    assert {"groq-llm-default", "gemini-llm-default"}.issubset(model_ids)
+    assert {"groq:llama-3.3-70b-versatile", "gemini:gemini-2.5-flash"}.issubset(model_ids)
 
     custom_model_id = f"gemini-proxy-{uuid4().hex[:8]}"
     register_response = await http_client.post(
@@ -104,16 +176,123 @@ async def test_models_endpoint_exposes_defaults_and_registration(client) -> None
 
 
 @pytest.mark.asyncio
+async def test_quorum_preview_and_multi_recipient_submission_flow(client) -> None:
+    http_client, app = client
+    await bootstrap_nodes(client)
+    created = await create_request_with_quorum_permits(client, request_tag=f"multi-{uuid4().hex}")
+
+    leader_result_hash = app.state.services.chain_service.web3_client.keccak_uint256(67)
+    leader_response = await http_client.post(
+        f"/v1/inference/{created['request_id']}/leader-result",
+        json={
+            "leader_address": created["leader_address"],
+            "risk_score": 67,
+            "leader_confidence": 84,
+            "leader_summary": "Leader saw moderate default risk.",
+            "provider": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "result_hash": leader_result_hash,
+        },
+    )
+    assert leader_response.status_code == 200
+    assert leader_response.json()["status"] == "leader_result_recorded"
+
+    queued_after_leader = await http_client.get(f"/v1/inference/{created['request_id']}")
+    assert queued_after_leader.status_code == 200
+    queued_request = queued_after_leader.json()
+    assert queued_request["status"] == "queued"
+    assert queued_request["leader_submission"]["risk_score"] == 67
+    assert queued_request["leader_submission"]["leader_address"] == created["leader_address"]
+    assert queued_request["verifier_verdicts"] == [
+        {
+            "verifier_address": verifier_address,
+            "submitted": False,
+            "accepted": None,
+            "confidence": None,
+            "reason": None,
+            "risk_score": None,
+            "result_hash": None,
+            "provider": None,
+            "model": None,
+            "summary": None,
+            "updated_at": None,
+        }
+        for verifier_address in created["quorum"]["verifier_addresses"]
+    ]
+
+    first_verifier = created["quorum"]["verifier_addresses"][0]
+    second_verifier = created["quorum"]["verifier_addresses"][1]
+
+    verifier_one_response = await http_client.post(
+        f"/v1/inference/{created['request_id']}/verdicts",
+        json={
+            "verifier_address": first_verifier,
+            "confidence": 82,
+            "risk_score": 67,
+            "result_hash": leader_result_hash,
+            "provider": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "summary": "Verifier one matched the leader result.",
+        },
+    )
+    assert verifier_one_response.status_code == 200
+    assert verifier_one_response.json()["status"] == "verifier_verdict_recorded"
+
+    queued_after_first_verifier = await http_client.get(f"/v1/inference/{created['request_id']}")
+    assert queued_after_first_verifier.status_code == 200
+    partially_completed = queued_after_first_verifier.json()
+    assert partially_completed["status"] == "queued"
+    submitted_verdicts = [verdict for verdict in partially_completed["verifier_verdicts"] if verdict["submitted"]]
+    assert len(submitted_verdicts) == 1
+    assert submitted_verdicts[0]["verifier_address"] == first_verifier
+    assert submitted_verdicts[0]["risk_score"] == 67
+    assert submitted_verdicts[0]["result_hash"] == leader_result_hash
+
+    verifier_two_response = await http_client.post(
+        f"/v1/inference/{created['request_id']}/verdicts",
+        json={
+            "verifier_address": second_verifier,
+            "confidence": 80,
+            "risk_score": 67,
+            "result_hash": leader_result_hash,
+            "provider": "groq",
+            "model": "llama-3.3-70b-versatile",
+            "summary": "Verifier two matched the leader result.",
+        },
+    )
+    assert verifier_two_response.status_code == 200
+    assert verifier_two_response.json()["status"] == "committed"
+
+    finalized_response = await http_client.get(f"/v1/inference/{created['request_id']}")
+    assert finalized_response.status_code == 200
+    finalized = finalized_response.json()
+    assert finalized["status"] == "accepted"
+    assert finalized["confirm_count"] == 2
+    assert finalized["reject_count"] == 0
+    assert finalized["risk_score"] == 67
+    assert finalized["chain_tx_hash"] is not None
+
+
+@pytest.mark.asyncio
 async def test_inference_request_lifecycle_commits_result_on_chain(client) -> None:
     http_client, app = client
     await bootstrap_nodes(client)
-    created = await create_request(client, prompt=f"accept-{uuid4().hex}")
+    created = await create_request(client, request_tag=f"accept-{uuid4().hex}")
+    permit_attachment = await attach_permit(
+        client,
+        task_id=created["task_id"],
+        leader_address=created["leader_address"] or created["quorum"]["leader_address"],
+    )
+    assert permit_attachment["status"] == "permit_attached"
 
     commit_response = await http_client.post(
         f"/v1/inference/{created['request_id']}/commit",
         json={
-            "leader_output": "Hosted model response",
+            "risk_score": 81,
             "leader_confidence": 92,
+            "leader_summary": "Applicant looks high risk due to prior defaults and leverage.",
+            "provider": "groq",
+            "model": "llama-3.3-70b-versatile",
             "verifier_verdicts": [
                 {
                     "verifier_address": created["quorum"]["verifier_addresses"][0],
@@ -142,7 +321,9 @@ async def test_inference_request_lifecycle_commits_result_on_chain(client) -> No
     assert request_response.status_code == 200
     request_payload = request_response.json()
     assert request_payload["status"] == "accepted"
-    assert request_payload["result_preview"] == "Hosted model response"
+    assert request_payload["risk_score"] == 81
+    assert request_payload["loan_id"].startswith("loan-accept-")
+    assert request_payload["result_preview"] is not None
     assert request_payload["chain_tx_hash"] == commit_payload["chain_tx_hash"]
 
     chain_result = await app.state.services.chain_service.get_result(created["task_id"])
@@ -154,13 +335,21 @@ async def test_inference_request_lifecycle_commits_result_on_chain(client) -> No
 async def test_inference_rejection_flow_records_rejected_status(client) -> None:
     http_client, app = client
     await bootstrap_nodes(client)
-    created = await create_request(client, prompt=f"reject-{uuid4().hex}")
+    created = await create_request(client, request_tag=f"reject-{uuid4().hex}")
+    await attach_permit(
+        client,
+        task_id=created["task_id"],
+        leader_address=created["leader_address"] or created["quorum"]["leader_address"],
+    )
 
     commit_response = await http_client.post(
         f"/v1/inference/{created['request_id']}/commit",
         json={
-            "leader_output": "Low confidence answer",
+            "risk_score": 22,
             "leader_confidence": 25,
+            "leader_summary": "Applicant appears low risk.",
+            "provider": "gemini",
+            "model": "gemini-2.5-flash",
             "verifier_verdicts": [
                 {
                     "verifier_address": created["quorum"]["verifier_addresses"][0],
@@ -197,13 +386,19 @@ async def test_inference_rejection_flow_records_rejected_status(client) -> None:
 async def test_dispute_submission_for_accepted_request(client) -> None:
     http_client, _app = client
     await bootstrap_nodes(client)
-    created = await create_request(client, prompt=f"dispute-{uuid4().hex}")
+    created = await create_request(client, request_tag=f"dispute-{uuid4().hex}")
+    await attach_permit(
+        client,
+        task_id=created["task_id"],
+        leader_address=created["leader_address"] or created["quorum"]["leader_address"],
+    )
 
     accepted_response = await http_client.post(
         f"/v1/inference/{created['request_id']}/commit",
         json={
-            "leader_output": "Potentially disputable answer",
+            "risk_score": 64,
             "leader_confidence": 84,
+            "leader_summary": "Borderline high-risk borrower.",
             "verifier_verdicts": [],
             "rejection_reason": None,
         },
@@ -231,3 +426,28 @@ async def test_dispute_submission_for_accepted_request(client) -> None:
     request_response = await http_client.get(f"/v1/inference/{created['request_id']}")
     assert request_response.status_code == 200
     assert request_response.json()["status"] == "disputed"
+
+
+@pytest.mark.asyncio
+async def test_inference_task_lookup_and_permit_attachment(client) -> None:
+    http_client, _app = client
+    await bootstrap_nodes(client)
+    created = await create_request(client, request_tag=f"permit-{uuid4().hex}")
+
+    task_lookup = await http_client.get(f"/v1/inference/task/{created['task_id']}")
+    assert task_lookup.status_code == 200
+    task_payload = task_lookup.json()
+    assert task_payload["request_id"] == created["request_id"]
+    assert task_payload["leader_address"] == created["quorum"]["leader_address"]
+
+    attachment = await attach_permit(
+        client,
+        task_id=created["task_id"],
+        leader_address=created["leader_address"] or created["quorum"]["leader_address"],
+    )
+    assert attachment["leader_address"] == created["quorum"]["leader_address"]
+
+    refreshed = await http_client.get(f"/v1/inference/task/{created['task_id']}")
+    assert refreshed.status_code == 200
+    refreshed_payload = refreshed.json()
+    assert refreshed_payload["metadata"]["permits"][0]["status"] == "shared-permit-provided"

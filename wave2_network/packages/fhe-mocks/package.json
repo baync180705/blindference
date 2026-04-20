@@ -1,0 +1,16 @@
+{
+  "name": "@blindference/fhe-mocks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Hardhat CoFHE mock environment for Blindference development",
+  "license": "BUSL-1.1",
+  "scripts": {
+    "node": "hardhat node --hostname 127.0.0.1 --port 8546",
+    "grant-acl": "hardhat run scripts/grant-acl.js --network localhost"
+  },
+  "devDependencies": {
+    "@cofhe/hardhat-plugin": "^0.4.0",
+    "@fhenixprotocol/cofhe-contracts": "^0.1.0",
+    "hardhat": "^2.26.3"
+  }
+}

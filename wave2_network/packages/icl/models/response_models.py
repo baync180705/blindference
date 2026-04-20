@@ -38,12 +38,54 @@ class QuorumAssignmentResponse(BaseModel):
     candidate_addresses: list[str]
 
 
+class QuorumPreviewResponse(BaseModel):
+    leader: str
+    verifiers: list[str]
+    candidates: list[str]
+
+
+class EncryptedFeatureResponse(BaseModel):
+    ct_hash: str
+    utype: str | int
+    signature: str
+
+
+class LeaderSubmissionResponse(BaseModel):
+    leader_address: str
+    risk_score: int | None = None
+    confidence: int | None = None
+    summary: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    result_hash: str | None = None
+    submitted_at: datetime | None = None
+
+
+class VerifierVerdictResponse(BaseModel):
+    verifier_address: str
+    submitted: bool = False
+    accepted: bool | None = None
+    confidence: int | None = None
+    reason: str | None = None
+    risk_score: int | None = None
+    result_hash: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    summary: str | None = None
+    updated_at: datetime | None = None
+
+
 class InferenceRequestResponse(BaseModel):
     request_id: str
     task_id: str
+    leader_address: str | None = None
     developer_address: str
     model_id: str
-    prompt: str
+    encrypted_features: list[EncryptedFeatureResponse]
+    feature_types: list[str]
+    loan_id: str | None = None
+    coverage_type: str | None = None
+    max_fee_gnk: int
     status: Literal["queued", "accepted", "rejected", "disputed"]
     min_tier: int
     zdr_required: bool
@@ -52,6 +94,9 @@ class InferenceRequestResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     result_hash: str | None = None
     result_preview: str | None = None
+    risk_score: int | None = None
+    leader_submission: LeaderSubmissionResponse | None = None
+    verifier_verdicts: list[VerifierVerdictResponse] = Field(default_factory=list)
     chain_tx_hash: str | None = None
     aggregated_confidence: int | None = None
     confirm_count: int = 0

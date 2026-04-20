@@ -1,62 +1,50 @@
-# Blindference
+# Blindference Wave 2
 
-Blindference Wave 2 is the SLA layer for Web3 AI: off-chain inference runs across a confidential node quorum, and the financial outcome settles on Arbitrum Sepolia through the Reineira protocol stack.
+Blindference Wave 2 is the SLA layer for Web3 AI. A user encrypts numeric risk-scoring inputs with CoFHE, the ICL assigns a `1 leader + 2 verifier` quorum, each node decrypts locally under user-granted permits, inference runs off-chain through Groq or Gemini, and the result commitment settles on Arbitrum Sepolia through the Reineira protocol stack.
 
-The active Wave 2 buildathon work lives in [wave2_network](./wave2_network). Legacy Wave 1 Fhenix code remains in this repository for reference, but the current demo, contracts, ICL backend, and operator runtime are all under `wave2_network/`.
+The active codebase is now entirely under [wave2_network](./wave2_network). The old root-level Wave 1 apps have been removed so this repository is ready to push as a single Wave 2 monorepo.
 
-## Current Status
-
-- Core Reineira protocol contracts are deployed and verified on Arbitrum Sepolia.
-- The Blindference demo vertical is deployed and verified on Arbitrum Sepolia.
-- The ICL backend completed a live Sepolia smoke test with a `1 leader + 1 verifier` quorum.
-- The frontend can request inference, track quorum status, and show the accepted result/dispute state.
-- A Groq/Gemini-ready node runtime exists for buildathon demos, with mock mode available for local development.
-
-Deployment details and live addresses are in [DEPLOYMENT.md](./DEPLOYMENT.md).
-
-## Repository Layout
+## Repo Layout
 
 ```text
 blindference/
-├── wave2_network/              Active Wave 2 monorepo
-│   ├── packages/contracts/     Reineira core protocol contracts in Foundry form
-│   ├── packages/blindference-demo/
-│   │                           Blindference demo vertical contracts
-│   ├── packages/icl/           FastAPI inference coordination layer
-│   ├── packages/frontend/      React + Vite demo frontend
-│   ├── packages/node-reineira/ Demo operator runtime
-│   ├── packages/sdk/           SDK scaffold
-│   └── packages/mcp-server/    MCP scaffold
-├── backend/                    Legacy Wave 1 backend
-├── frontend/                   Legacy Wave 1 frontend
-├── fhenix_inference/           Legacy Wave 1 contracts
-└── README.md
+├── ARCHITECTURE.md
+├── DEPLOYMENT.md
+├── README.md
+└── wave2_network/
+    ├── packages/contracts/           Reineira core protocol contracts
+    ├── packages/blindference-demo/   Blindference demo contracts
+    ├── packages/icl/                 FastAPI inference coordination layer
+    ├── packages/frontend/            BF demo frontend, wired to live Wave 2 APIs
+    ├── packages/node-reineira/       Leader / verifier node runtime
+    ├── packages/fhe-mocks/           Optional local CoFHE mock node
+    ├── packages/sdk/
+    ├── packages/mcp-server/
+    └── protocol/                     Upstream Reineira protocol reference
 ```
 
 ## Quick Start
 
-Use the detailed setup guide in [wave2_network/README.md](./wave2_network/README.md).
+Use the full runbook in [wave2_network/README.md](./wave2_network/README.md).
 
-Typical local flow:
+For the live demo path, the normal sequence is:
 
-1. Start `anvil`.
-2. Deploy `packages/contracts` and `packages/blindference-demo` with Foundry.
-3. Start the ICL backend from `packages/icl`.
-4. Start the React frontend from `packages/frontend`.
-5. Run the demo node runtime from `packages/node-reineira`.
+1. Start the ICL from `wave2_network/packages/icl`.
+2. Bootstrap 3 demo operators through the ICL admin route.
+3. Start 3 node daemons from `wave2_network/packages/node-reineira`, one per operator key.
+4. Start the BF frontend from `wave2_network/packages/frontend`.
+5. Open the app, connect MetaMask on Arbitrum Sepolia, submit a risk request, and watch the quorum settle.
 
-## What Is Still Open From The Reineira Side
+## Current Demo State
 
-These are the remaining partner-owned or joint integration seams we still treat as non-final:
+- Core protocol contracts are deployed on Arbitrum Sepolia.
+- Blindference demo contracts are deployed on Arbitrum Sepolia.
+- The BF frontend design has been transplanted into `wave2_network/packages/frontend` and wired to the live Wave 2 APIs.
+- The frontend now shows in-flight leader and verifier progress before final commitment.
+- The demo includes a mock escrow release surface after accepted risk scoring so the UI has complete settlement evidence for recording.
 
-- Replace `MockAgentIdentityRegistry` with the production identity / ERC-8004-aligned registry.
-- Replace `MockEscrowReleaser` with the real settlement and escrow release path.
-- Replace the demo price oracle path with the intended production oracle / policy data source.
-- Harden the underwriter + dispute flow beyond the demo policy assumptions.
-- Finish production-grade operator lifecycle tooling around attestations, rewards, and reputation automation.
+## Docs
 
-## Security Notes Before Push
-
-- Real `.env` files are gitignored; only `.env.example` files should be committed.
-- The repository currently contains public Anvil default keys in code defaults for local testing. Those are not private funds, but production or funded keys should only live in ignored `.env` files.
-- If you are about to push, double-check `git status` and make sure no real `.env`, cache, broadcast, or backup folders are staged.
+- Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md)
+- Deployments: [DEPLOYMENT.md](./DEPLOYMENT.md)
+- Monorepo runbook: [wave2_network/README.md](./wave2_network/README.md)

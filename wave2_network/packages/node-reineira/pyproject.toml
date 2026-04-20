@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-blindference-node = "blindference_node.cli:app"
+blindference-node = "blindference_node.cli:main"
 
 [project.optional-dependencies]
 dev = [

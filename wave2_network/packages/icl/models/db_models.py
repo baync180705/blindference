@@ -17,7 +17,11 @@ class InferenceRequestRecord(BaseModel):
     invocation_id: int
     developer_address: str
     model_id: str
-    prompt: str
+    encrypted_features: list[dict[str, str | int]]
+    feature_types: list[str]
+    loan_id: str | None = None
+    coverage_type: str | None = None
+    max_fee_gnk: int = 0
     min_tier: int
     zdr_required: bool
     verifier_count: int
@@ -29,6 +33,7 @@ class InferenceRequestRecord(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     result_hash: str | None = None
     result_preview: str | None = None
+    risk_score: int | None = None
     chain_tx_hash: str | None = None
     aggregated_confidence: int | None = None
     confirm_count: int = 0
@@ -49,10 +54,16 @@ class VerifierVerdictRecord(BaseModel):
     request_id: str
     task_id: str
     verifier_address: str
-    accepted: bool
+    accepted: bool | None = None
     confidence: int
     reason: str | None = None
+    result_hash: str | None = None
+    risk_score: int | None = None
+    provider: str | None = None
+    model: str | None = None
+    summary: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class QuorumCertificateRecord(BaseModel):
@@ -89,6 +100,21 @@ class DisputeRecord(BaseModel):
     evidence_uri: str
     notes: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class PermitEntryRecord(BaseModel):
+    node_address: str
+    permit: str
+    status: str = "shared-permit-provided"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class PermitRecord(BaseModel):
+    task_id: str
+    permits: list[PermitEntryRecord]
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class OperatorRecord(BaseModel):

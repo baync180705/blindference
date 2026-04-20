@@ -1,1 +1,1 @@
-export { getCoverageQuote } from './inferenceApi'
+export { coverageApi } from './inferenceApi'

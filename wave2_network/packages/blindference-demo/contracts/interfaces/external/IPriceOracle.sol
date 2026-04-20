@@ -6,4 +6,5 @@ pragma solidity ^0.8.24;
 interface IPriceOracle {
     function latestAnswer(bytes32 asset) external view returns (int256 price, uint256 updatedAt);
     function priceAt(bytes32 asset, uint256 timestamp) external view returns (int256 price);
+    function getDefaultOutcome(string calldata loanId) external view returns (bool);
 }

@@ -18,8 +18,8 @@ interface IBlindferenceUnderwriter {
         uint256 indexed invocationId,
         address indexed buyer,
         uint256 payoutAmount,
-        int256 priceAtIssue,
-        int256 priceAtClaim
+        uint8 riskScore,
+        bool defaulted
     );
     event ClaimRejected(uint256 indexed invocationId, address indexed buyer, string reason);
 
@@ -27,17 +27,15 @@ interface IBlindferenceUnderwriter {
     error CoverageMissing();
     error AlreadyClaimed();
     error OutputNotMature();
-    error LossBelowThreshold(uint256 lossBps, uint256 thresholdBps);
-    error PriceUnavailable();
+    error LoanIdMismatch();
+    error PredictionCorrect();
     error ZeroCoverage();
 
     function purchaseCoverage(uint256 invocationId, uint256 coverageAmount, uint256 escrowId) external;
 
-    function claimLoss(uint256 invocationId) external;
+    function claimLoss(uint256 invocationId, string calldata loanId) external;
 
     function coverageOf(uint256 invocationId, address buyer) external view returns (Coverage memory);
 
-    function lossThresholdBps() external view returns (uint256);
-
-    function holdToleranceBps() external view returns (uint256);
+    function riskThreshold() external pure returns (uint256);
 }

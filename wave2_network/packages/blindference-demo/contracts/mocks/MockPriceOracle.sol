@@ -10,6 +10,7 @@ contract MockPriceOracle is IPriceOracle {
     mapping(bytes32 asset => int256) public price;
     mapping(bytes32 asset => mapping(uint256 timestamp => int256)) public historicalPrice;
     mapping(bytes32 asset => uint256) public updatedAt;
+    mapping(string loanId => bool defaulted) public defaultOutcomes;
     address public owner;
 
     error NotOwner();
@@ -41,6 +42,10 @@ contract MockPriceOracle is IPriceOracle {
         updatedAt[assetKey] = block.timestamp;
     }
 
+    function setDefaultOutcome(string calldata loanId, bool defaulted) external onlyOwner {
+        defaultOutcomes[loanId] = defaulted;
+    }
+
     function getPrice(string calldata asset, uint256 timestamp) external view returns (uint256) {
         bytes32 assetKey = keccak256(bytes(asset));
         int256 value = timestamp == 0 ? price[assetKey] : historicalPrice[assetKey][timestamp];
@@ -48,6 +53,10 @@ contract MockPriceOracle is IPriceOracle {
             revert PriceNotSet();
         }
         return uint256(value);
+    }
+
+    function getDefaultOutcome(string calldata loanId) external view returns (bool) {
+        return defaultOutcomes[loanId];
     }
 
     function latestAnswer(bytes32 asset) external view returns (int256, uint256) {

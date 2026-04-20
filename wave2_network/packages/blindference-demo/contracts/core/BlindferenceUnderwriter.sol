@@ -9,13 +9,13 @@ import {IBlindferenceUnderwriter} from "../interfaces/core/IBlindferenceUnderwri
 import {IPriceOracle} from "../interfaces/external/IPriceOracle.sol";
 
 contract BlindferenceUnderwriter is TestnetCoreBase, IBlindferenceUnderwriter {
+    uint256 public constant RISK_THRESHOLD = 50;
+
     /// @custom:storage-location erc7201:blindference.examples.BlindferenceUnderwriter
     struct Layout {
         IBlindferenceAttestor attestor;
         IPriceOracle priceOracle;
         IEscrowReleaser escrowReleaser;
-        uint256 lossThreshold;
-        uint256 holdTolerance;
         mapping(uint256 invocationId => mapping(address buyer => Coverage)) coverages;
     }
 
@@ -30,12 +30,9 @@ contract BlindferenceUnderwriter is TestnetCoreBase, IBlindferenceUnderwriter {
         address owner_,
         address attestor_,
         address priceOracle_,
-        address escrowReleaser_,
-        uint256 lossThresholdBps_,
-        uint256 holdToleranceBps_
+        address escrowReleaser_
     ) external initializer {
         require(attestor_ != address(0) && priceOracle_ != address(0) && escrowReleaser_ != address(0), "ZeroAddress");
-        require(lossThresholdBps_ > 0 && lossThresholdBps_ <= 10_000, "InvalidThreshold");
 
         __TestnetCoreBase_init(owner_);
 
@@ -43,8 +40,6 @@ contract BlindferenceUnderwriter is TestnetCoreBase, IBlindferenceUnderwriter {
         l.attestor = IBlindferenceAttestor(attestor_);
         l.priceOracle = IPriceOracle(priceOracle_);
         l.escrowReleaser = IEscrowReleaser(escrowReleaser_);
-        l.lossThreshold = lossThresholdBps_;
-        l.holdTolerance = holdToleranceBps_;
     }
 
     function purchaseCoverage(uint256 invocationId, uint256 coverageAmount, uint256 escrowId) external nonReentrant {
@@ -69,7 +64,7 @@ contract BlindferenceUnderwriter is TestnetCoreBase, IBlindferenceUnderwriter {
         emit CoveragePurchased(invocationId, buyer, coverageAmount, escrowId);
     }
 
-    function claimLoss(uint256 invocationId) external nonReentrant {
+    function claimLoss(uint256 invocationId, string calldata loanId) external nonReentrant {
         Layout storage l = _layout();
         address buyer = _msgSender();
         Coverage storage coverage = l.coverages[invocationId][buyer];
@@ -85,71 +80,30 @@ contract BlindferenceUnderwriter is TestnetCoreBase, IBlindferenceUnderwriter {
             revert OutputNotMature();
         }
 
-        (int256 currentPrice,) = l.priceOracle.latestAnswer(output.asset);
-        if (currentPrice <= 0 || output.priceAtIssue <= 0) {
-            revert PriceUnavailable();
+        if (keccak256(bytes(loanId)) != output.loanIdHash) {
+            revert LoanIdMismatch();
         }
 
-        (uint256 lossBps, uint256 threshold) = _computeLoss(output, currentPrice);
-        if (lossBps < threshold) {
-            emit ClaimRejected(invocationId, buyer, "loss below threshold");
-            revert LossBelowThreshold(lossBps, threshold);
-        }
-
-        uint256 payout = coverage.coverageAmount * lossBps / 10_000;
-        if (payout > coverage.coverageAmount) {
-            payout = coverage.coverageAmount;
+        bool predictedHighRisk = output.riskScore >= uint8(RISK_THRESHOLD);
+        bool actuallyDefaulted = l.priceOracle.getDefaultOutcome(loanId);
+        if (predictedHighRisk == actuallyDefaulted) {
+            emit ClaimRejected(invocationId, buyer, "prediction was correct");
+            revert PredictionCorrect();
         }
 
         coverage.claimed = true;
+        uint256 payout = coverage.coverageAmount;
         l.escrowReleaser.release(coverage.escrowId, buyer, payout);
 
-        emit ClaimPaid(invocationId, buyer, payout, output.priceAtIssue, currentPrice);
+        emit ClaimPaid(invocationId, buyer, payout, output.riskScore, actuallyDefaulted);
     }
 
     function coverageOf(uint256 invocationId, address buyer) external view returns (Coverage memory) {
         return _layout().coverages[invocationId][buyer];
     }
 
-    function lossThresholdBps() external view returns (uint256) {
-        return _layout().lossThreshold;
-    }
-
-    function holdToleranceBps() external view returns (uint256) {
-        return _layout().holdTolerance;
-    }
-
-    function _computeLoss(IBlindferenceAttestor.InferenceOutput memory output, int256 currentPrice)
-        private
-        view
-        returns (uint256 lossBps, uint256 threshold)
-    {
-        Layout storage l = _layout();
-        threshold = l.lossThreshold;
-        uint256 issuePrice = uint256(output.priceAtIssue);
-
-        if (output.recommendation == IBlindferenceAttestor.Recommendation.BUY) {
-            if (currentPrice < output.priceAtIssue) {
-                uint256 drop = uint256(output.priceAtIssue - currentPrice);
-                lossBps = drop * 10_000 / issuePrice;
-            }
-        } else if (output.recommendation == IBlindferenceAttestor.Recommendation.SELL) {
-            if (currentPrice > output.priceAtIssue) {
-                uint256 rise = uint256(currentPrice - output.priceAtIssue);
-                lossBps = rise * 10_000 / issuePrice;
-            }
-        } else {
-            uint256 absMove;
-            if (currentPrice >= output.priceAtIssue) {
-                absMove = uint256(currentPrice - output.priceAtIssue);
-            } else {
-                absMove = uint256(output.priceAtIssue - currentPrice);
-            }
-            uint256 holdMoveBps = absMove * 10_000 / issuePrice;
-            if (holdMoveBps > l.holdTolerance) {
-                lossBps = holdMoveBps - l.holdTolerance;
-            }
-        }
+    function riskThreshold() external pure returns (uint256) {
+        return RISK_THRESHOLD;
     }
 
     function _layout() private pure returns (Layout storage l) {

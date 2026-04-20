@@ -58,8 +58,15 @@ contract DeployBlindferenceAgentScript is Script {
             modelId: vm.envOr("MODEL_ID", uint256(101)),
             quorumId: vm.envOr("QUORUM_ID", bytes32(uint256(0xC0DE))),
             provider: vm.envOr("MODEL_PROVIDER", string("groq")),
-            modelIdentifier: vm.envOr("MODEL_IDENTIFIER", string("groq:llama3-70b")),
-            pricing: PricingConfig({baseFee: 5e5, maxModelSpend: 5e6, premiumCap: 1e6})
+            modelIdentifier: vm.envOr(
+                "MODEL_IDENTIFIER",
+                string("groq:llama-3.3-70b-versatile")
+            ),
+            pricing: PricingConfig({
+                baseFee: 5e5,
+                maxModelSpend: 5e6,
+                premiumCap: 1e6
+            })
         });
 
         vm.startBroadcast();
@@ -73,7 +80,9 @@ contract DeployBlindferenceAgentScript is Script {
         _summary(d, cfg);
     }
 
-    function _deploy(AgentConfigInput memory cfg) internal returns (Deployment memory d) {
+    function _deploy(
+        AgentConfigInput memory cfg
+    ) internal returns (Deployment memory d) {
         address dispatcher = msg.sender;
 
         d.identity = _identityRegistry();
@@ -81,6 +90,8 @@ contract DeployBlindferenceAgentScript is Script {
         d.priceOracle = new MockPriceOracle();
         d.priceOracle.setLatest(ETH_ASSET, 3_000e8);
         d.priceOracle.setLatest(BTC_ASSET, 60_000e8);
+        d.priceOracle.setDefaultOutcome("loan_demo_safe", false);
+        d.priceOracle.setDefaultOutcome("loan_demo_risky", true);
 
         d.agentConfig = _agentConfigRegistry(address(d.identity));
         d.ecr = _executionRegistry(dispatcher);
@@ -90,41 +101,65 @@ contract DeployBlindferenceAgentScript is Script {
         d.agentPolicy = new SinglePlanCombineIdentity(d.modelBinding);
         d.quorumPolicy = new FixedQuorumPolicy(cfg.quorumId);
 
-        BlindferenceAttestor attestorImpl = new BlindferenceAttestor(address(0));
+        BlindferenceAttestor attestorImpl = new BlindferenceAttestor(
+            address(0)
+        );
         d.attestor = BlindferenceAttestor(
             address(
                 new ERC1967Proxy(
-                    address(attestorImpl), abi.encodeCall(BlindferenceAttestor.initialize, (msg.sender, address(d.ecr)))
+                    address(attestorImpl),
+                    abi.encodeCall(
+                        BlindferenceAttestor.initialize,
+                        (msg.sender, address(d.ecr))
+                    )
                 )
             )
         );
 
-        BlindferenceUnderwriter underwriterImpl = new BlindferenceUnderwriter(address(0));
+        BlindferenceUnderwriter underwriterImpl = new BlindferenceUnderwriter(
+            address(0)
+        );
         d.underwriter = BlindferenceUnderwriter(
             address(
                 new ERC1967Proxy(
                     address(underwriterImpl),
                     abi.encodeCall(
                         BlindferenceUnderwriter.initialize,
-                        (msg.sender, address(d.attestor), address(d.priceOracle), address(d.escrow), uint256(200), uint256(100))
+                        (
+                            msg.sender,
+                            address(d.attestor),
+                            address(d.priceOracle),
+                            address(d.escrow)
+                        )
                     )
                 )
             )
         );
 
         d.agent = new BlindferenceAgent(
-            msg.sender, "Blindference Demo Agent", cfg.provider, cfg.modelIdentifier, address(d.attestor), address(d.underwriter)
+            msg.sender,
+            "Blindference Demo Agent",
+            cfg.provider,
+            cfg.modelIdentifier,
+            address(d.attestor),
+            address(d.underwriter)
         );
     }
 
-    function _registerAgentIdentity(Deployment memory d, AgentConfigInput memory cfg) internal {
+    function _registerAgentIdentity(
+        Deployment memory d,
+        AgentConfigInput memory cfg
+    ) internal {
         address currentWallet = d.identity.walletOf(cfg.agentId);
         if (currentWallet != cfg.agentWallet) {
             d.identity.register(cfg.agentId, cfg.agentWallet);
         }
     }
 
-    function _compileAgent(Deployment memory d, AgentConfigInput memory cfg) internal {
+    function _compileAgent(
+        Deployment memory d,
+        AgentConfigInput memory cfg
+    ) internal {
         address[] memory models = new address[](1);
         models[0] = address(d.modelBinding);
 
@@ -136,24 +171,28 @@ contract DeployBlindferenceAgentScript is Script {
         bytes32[] memory ticketModes = new bytes32[](1);
         ticketModes[0] = keccak256("per-call");
 
-        IAgentConfigRegistry.AgentConfig memory agentSlots = IAgentConfigRegistry.AgentConfig({
-            wallet: cfg.agentWallet,
-            pricing: cfg.pricing,
-            models: models,
-            agentPolicy: address(d.agentPolicy),
-            quorumPolicy: address(d.quorumPolicy),
-            inputConditions: inputConditions,
-            outputConditions: outputConditions,
-            executions: executions,
-            underwriters: underwriters,
-            ticketModes: ticketModes,
-            version: 0
-        });
+        IAgentConfigRegistry.AgentConfig
+            memory agentSlots = IAgentConfigRegistry.AgentConfig({
+                wallet: cfg.agentWallet,
+                pricing: cfg.pricing,
+                models: models,
+                agentPolicy: address(d.agentPolicy),
+                quorumPolicy: address(d.quorumPolicy),
+                inputConditions: inputConditions,
+                outputConditions: outputConditions,
+                executions: executions,
+                underwriters: underwriters,
+                ticketModes: ticketModes,
+                version: 0
+            });
 
         d.agentConfig.configure(cfg.agentId, agentSlots);
     }
 
-    function _summary(Deployment memory d, AgentConfigInput memory cfg) internal pure {
+    function _summary(
+        Deployment memory d,
+        AgentConfigInput memory cfg
+    ) internal pure {
         console2.log("\n=== Blindference agent compiled ===");
         console2.log("agentId:", cfg.agentId);
         console2.log("agentWallet:", cfg.agentWallet);
@@ -174,9 +213,13 @@ contract DeployBlindferenceAgentScript is Script {
         console2.log("MockPriceOracle:", address(d.priceOracle));
         console2.log("ETH/USDC initial price:", uint256(3_000e8));
         console2.log("BTC/USDC initial price:", uint256(60_000e8));
+        console2.log("loan_demo_safe default outcome:", uint256(0));
+        console2.log("loan_demo_risky default outcome:", uint256(1));
     }
 
-    function _agentConfigRegistry(address identityAddress) internal returns (AgentConfigRegistry registry) {
+    function _agentConfigRegistry(
+        address identityAddress
+    ) internal returns (AgentConfigRegistry registry) {
         address configured = _envAddressOrZero("AGENT_CONFIG_REGISTRY_ADDRESS");
         if (configured != address(0)) {
             return AgentConfigRegistry(configured);
@@ -186,42 +229,76 @@ contract DeployBlindferenceAgentScript is Script {
         registry = AgentConfigRegistry(
             address(
                 new ERC1967Proxy(
-                    address(agentImpl), abi.encodeCall(AgentConfigRegistry.initialize, (msg.sender, identityAddress))
+                    address(agentImpl),
+                    abi.encodeCall(
+                        AgentConfigRegistry.initialize,
+                        (msg.sender, identityAddress)
+                    )
                 )
             )
         );
     }
 
-    function _executionRegistry(address dispatcher) internal returns (ExecutionCommitmentRegistry registry) {
-        address configured = _envAddressOrZero("EXECUTION_COMMITMENT_REGISTRY_ADDRESS");
+    function _executionRegistry(
+        address dispatcher
+    ) internal returns (ExecutionCommitmentRegistry registry) {
+        address configured = _envAddressOrZero(
+            "EXECUTION_COMMITMENT_REGISTRY_ADDRESS"
+        );
         if (configured != address(0)) {
             return ExecutionCommitmentRegistry(configured);
         }
 
-        ExecutionCommitmentRegistry implementation = new ExecutionCommitmentRegistry(address(0));
+        ExecutionCommitmentRegistry implementation = new ExecutionCommitmentRegistry(
+                address(0)
+            );
         registry = ExecutionCommitmentRegistry(
             address(
                 new ERC1967Proxy(
-                    address(implementation), abi.encodeCall(ExecutionCommitmentRegistry.initialize, (msg.sender, dispatcher))
+                    address(implementation),
+                    abi.encodeCall(
+                        ExecutionCommitmentRegistry.initialize,
+                        (msg.sender, dispatcher)
+                    )
                 )
             )
         );
     }
 
-    function _nodeAttestationRegistry() internal returns (NodeAttestationRegistry registry) {
-        address configured = _envAddressOrZero("NODE_ATTESTATION_REGISTRY_ADDRESS");
+    function _nodeAttestationRegistry()
+        internal
+        returns (NodeAttestationRegistry registry)
+    {
+        address configured = _envAddressOrZero(
+            "NODE_ATTESTATION_REGISTRY_ADDRESS"
+        );
         if (configured != address(0)) {
             return NodeAttestationRegistry(configured);
         }
 
-        NodeAttestationRegistry implementation = new NodeAttestationRegistry(address(0));
+        NodeAttestationRegistry implementation = new NodeAttestationRegistry(
+            address(0)
+        );
         registry = NodeAttestationRegistry(
-            address(new ERC1967Proxy(address(implementation), abi.encodeCall(NodeAttestationRegistry.initialize, (msg.sender))))
+            address(
+                new ERC1967Proxy(
+                    address(implementation),
+                    abi.encodeCall(
+                        NodeAttestationRegistry.initialize,
+                        (msg.sender)
+                    )
+                )
+            )
         );
     }
 
-    function _identityRegistry() internal returns (MockAgentIdentityRegistry registry) {
-        address configured = _envAddressOrZero("MOCK_AGENT_IDENTITY_REGISTRY_ADDRESS");
+    function _identityRegistry()
+        internal
+        returns (MockAgentIdentityRegistry registry)
+    {
+        address configured = _envAddressOrZero(
+            "MOCK_AGENT_IDENTITY_REGISTRY_ADDRESS"
+        );
         if (configured != address(0)) {
             return MockAgentIdentityRegistry(configured);
         }
@@ -236,7 +313,9 @@ contract DeployBlindferenceAgentScript is Script {
         releaser = new MockEscrowReleaser();
     }
 
-    function _envAddressOrZero(string memory key) internal view returns (address) {
+    function _envAddressOrZero(
+        string memory key
+    ) internal view returns (address) {
         try vm.envAddress(key) returns (address value) {
             return value;
         } catch {

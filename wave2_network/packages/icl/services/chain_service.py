@@ -41,14 +41,21 @@ class ChainService:
         self.agent_config_registry = AgentConfigRegistryClient(self.web3_client, settings)
         self.reputation_registry = ReputationRegistryClient(self.web3_client, settings)
         self.reward_accumulator = RewardAccumulatorClient(self.web3_client, settings)
+        self._mock_invocations: dict[int, dict[str, Any]] = {}
 
     async def is_connected(self) -> bool:
+        if self.settings.MOCK_CHAIN:
+            return True
         return await asyncio.to_thread(self.web3_client.is_connected)
 
     async def model_registry_ready(self) -> bool:
+        if self.settings.MOCK_CHAIN:
+            return True
         return await asyncio.to_thread(self.agent_config_registry.is_deployed)
 
     async def reward_accumulator_ready(self) -> bool:
+        if self.settings.MOCK_CHAIN:
+            return True
         return await asyncio.to_thread(self.reward_accumulator.is_deployed)
 
     async def get_active_nodes(self, min_tier: int, zdr_required: bool) -> list[str]:
@@ -70,7 +77,7 @@ class ChainService:
             if (now - heartbeat).total_seconds() > self.settings.HEARTBEAT_GRACE_SECONDS:
                 continue
 
-            is_valid = await asyncio.to_thread(
+            is_valid = True if self.settings.MOCK_CHAIN else await asyncio.to_thread(
                 self.node_attestation_registry.has_valid,
                 operator["operator_address"],
                 operator["attestation_type"],
@@ -88,11 +95,15 @@ class ChainService:
         if operator is None:
             raise KeyError(f"node {node_address} not found")
 
-        reputation = await asyncio.to_thread(
-            self.reputation_registry.reputation_of,
-            operator["operator_address"],
+        reputation = (
+            {"score": max(operator.get("tasks_accepted", 0), 1), "cycles_guilty": operator.get("tasks_rejected", 0)}
+            if self.settings.MOCK_CHAIN
+            else await asyncio.to_thread(
+                self.reputation_registry.reputation_of,
+                operator["operator_address"],
+            )
         )
-        is_valid = await asyncio.to_thread(
+        is_valid = True if self.settings.MOCK_CHAIN else await asyncio.to_thread(
             self.node_attestation_registry.has_valid,
             operator["operator_address"],
             operator["attestation_type"],
@@ -139,6 +150,17 @@ class ChainService:
     ) -> dict[str, Any]:
         del developer_address
         invocation_id = self.web3_client.task_id_to_invocation_id(task_id)
+        if self.settings.MOCK_CHAIN:
+            self._mock_invocations[invocation_id] = {
+                "status": "dispatched",
+                "executor": leader_address,
+                "cross_verifier": cross_verifier_address,
+                "agent_id": self._agent_id_for_model(model_id),
+                "verified_output": None,
+                "tx_hash": None,
+                "escrow_id": invocation_id,
+            }
+            return {"invocation_id": invocation_id, "tx_hash": None, "status": "dispatched"}
         current_status = await asyncio.to_thread(
             self.execution_commitment_registry.status_of,
             invocation_id,
@@ -166,6 +188,42 @@ class ChainService:
             "status": "dispatched",
         }
 
+    async def grant_permit(
+        self,
+        node_address: str,
+        encrypted_features: list[dict[str, str | int]],
+        metadata: dict[str, Any] | None = None,
+    ) -> list[dict[str, str]]:
+        node = self.web3_client.checksum_address(node_address)
+        metadata = metadata or {}
+        shared_permits = metadata.get("cofhe_shared_permits", {})
+        serialized_permit = None
+        if isinstance(shared_permits, dict):
+            serialized_permit = (
+                shared_permits.get(node)
+                or shared_permits.get(node.lower())
+                or shared_permits.get("*")
+            )
+
+        permits: list[dict[str, str]] = []
+        for feature in encrypted_features:
+            ct_hash = str(feature["ctHash"])
+            if self.settings.MOCK_CHAIN:
+                status = "granted-mock"
+            elif serialized_permit:
+                status = "shared-permit-attached"
+            else:
+                status = "missing-user-shared-permit"
+            permits.append(
+                {
+                    "ct_hash": ct_hash,
+                    "grantee": node,
+                    "status": status,
+                    "permit": str(serialized_permit) if serialized_permit else "",
+                }
+            )
+        return permits
+
     async def finalize_execution(
         self,
         *,
@@ -176,6 +234,21 @@ class ChainService:
         accepted: bool,
     ) -> dict[str, Any]:
         invocation_id = self.web3_client.task_id_to_invocation_id(task_id)
+        if self.settings.MOCK_CHAIN:
+            status = "verified" if accepted else "escalated"
+            tx_hash = self.web3_client.keccak_text(f"mock-chain:{task_id}:{result_hash}:{status}")
+            self._mock_invocations[invocation_id] = {
+                **self._mock_invocations.get(invocation_id, {}),
+                "status": status,
+                "executor": leader,
+                "cross_verifier": cross_verifier,
+                "verified_output": result_hash,
+                "tx_hash": tx_hash,
+                "escrow_id": invocation_id,
+            }
+            result = await self.get_result(task_id)
+            result["tx_hash"] = tx_hash
+            return result
         leader_private_key = self._private_key_for_operator(leader)
         verifier_private_key = self._private_key_for_operator(cross_verifier)
 
@@ -243,6 +316,16 @@ class ChainService:
 
     async def get_result(self, task_id: str) -> dict[str, Any]:
         invocation_id = self.web3_client.task_id_to_invocation_id(task_id)
+        if self.settings.MOCK_CHAIN:
+            invocation = dict(self._mock_invocations.get(invocation_id, {}))
+            invocation.setdefault("status", "none")
+            invocation.setdefault("verified_output", None)
+            invocation.setdefault("executor", "0x0000000000000000000000000000000000000000")
+            invocation.setdefault("cross_verifier", "0x0000000000000000000000000000000000000000")
+            invocation.setdefault("agent_id", 0)
+            invocation.setdefault("escrow_id", invocation_id)
+            invocation["invocation_id"] = invocation_id
+            return invocation
         invocation = await asyncio.to_thread(
             self.execution_commitment_registry.invocation,
             invocation_id,
@@ -285,26 +368,29 @@ class ChainService:
                 "jurisdiction": template["jurisdiction"],
             }
             document_hash = self.web3_client.keccak_text(json.dumps(metadata, sort_keys=True))
-            digest = await asyncio.to_thread(
-                self.node_attestation_registry.digest,
-                node_address=operator_address,
-                attestation_type=attestation_type,
-                document_hash=document_hash,
-                counterparty=PUBLIC_COUNTERPARTY,
-                effective_at=effective_at,
-                expires_at=expires_at,
-            )
-            signature = self.web3_client.sign_digest(digest, private_key=template["private_key"])
-            tx_result = await asyncio.to_thread(
-                self.node_attestation_registry.commit,
-                node_address=operator_address,
-                attestation_type=attestation_type,
-                document_hash=document_hash,
-                counterparty=PUBLIC_COUNTERPARTY,
-                effective_at=effective_at,
-                expires_at=expires_at,
-                signature=bytes(signature),
-            )
+            if self.settings.MOCK_CHAIN:
+                tx_result = {"tx_hash": self.web3_client.keccak_text(f"mock-attestation:{operator_address}:{now}")}
+            else:
+                digest = await asyncio.to_thread(
+                    self.node_attestation_registry.digest,
+                    node_address=operator_address,
+                    attestation_type=attestation_type,
+                    document_hash=document_hash,
+                    counterparty=PUBLIC_COUNTERPARTY,
+                    effective_at=effective_at,
+                    expires_at=expires_at,
+                )
+                signature = self.web3_client.sign_digest(digest, private_key=template["private_key"])
+                tx_result = await asyncio.to_thread(
+                    self.node_attestation_registry.commit,
+                    node_address=operator_address,
+                    attestation_type=attestation_type,
+                    document_hash=document_hash,
+                    counterparty=PUBLIC_COUNTERPARTY,
+                    effective_at=effective_at,
+                    expires_at=expires_at,
+                    signature=bytes(signature),
+                )
 
             operator_record = OperatorRecord(
                 operator_address=operator_address,

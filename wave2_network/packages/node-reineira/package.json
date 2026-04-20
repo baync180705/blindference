@@ -1,0 +1,9 @@
+{
+  "name": "blindference-node-bridge",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cofhe/sdk": "^0.4.0",
+    "viem": "^2.38.6"
+  }
+}

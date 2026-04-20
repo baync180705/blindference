@@ -34,18 +34,16 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
     uint256 public constant ESCROW_ID = 9001;
     uint256 public constant AGENT_ID = 7;
 
-    bytes32 public constant ASSET = keccak256("ETH/USDC");
-    bytes32 public constant MODEL_KEY = keccak256("groq:llama3-70b");
-    bytes32 public constant RAW_RESPONSE_HASH = keccak256("BUY ETH/USDC WITH 85% CONFIDENCE");
-    int256 public constant PRICE_AT_ISSUE = 2_500e8;
+    bytes32 public constant LOAN_ID_HASH = keccak256(bytes("loan_demo_risky"));
+    bytes32 public constant MODEL_KEY = keccak256("groq:llama-3.3-70b-versatile");
+    bytes32 public constant HIGH_RISK_RESPONSE_HASH = keccak256(abi.encode(uint256(82)));
+    bytes32 public constant LOW_RISK_RESPONSE_HASH = keccak256(abi.encode(uint256(24)));
     uint16 public constant CONFIDENCE = 8_500;
     uint64 public constant SIGNAL_VALIDITY = 6 hours;
 
     bytes32 public constant SALT_E = bytes32(uint256(0x11));
     bytes32 public constant SALT_V = bytes32(uint256(0x22));
 
-    uint256 public constant LOSS_THRESHOLD_BPS = 200;
-    uint256 public constant HOLD_TOLERANCE_BPS = 100;
     uint256 public constant COVERAGE_AMOUNT = 1_000e6;
 
     function setUp() public {
@@ -75,10 +73,7 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
             address(
                 new ERC1967Proxy(
                     address(underwriterImpl),
-                    abi.encodeCall(
-                        BlindferenceUnderwriter.initialize,
-                        (owner, address(attestor), address(oracle), address(escrow), LOSS_THRESHOLD_BPS, HOLD_TOLERANCE_BPS)
-                    )
+                    abi.encodeCall(BlindferenceUnderwriter.initialize, (owner, address(attestor), address(oracle), address(escrow)))
                 )
             )
         );
@@ -102,15 +97,16 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
         ecr.reveal(INVOCATION_ID, IECR.Role.CROSS_VERIFIER, outputDigest, SALT_V);
     }
 
-    function _commitBuyOutput() internal returns (uint64 validUntil, bytes32 responseHash) {
+    function _commitRiskOutput(bytes32 loanIdHash, uint8 riskScore, bytes32 responseHash)
+        internal
+        returns (uint64 validUntil)
+    {
         validUntil = uint64(block.timestamp + SIGNAL_VALIDITY);
-        responseHash = RAW_RESPONSE_HASH;
         bytes32 digest = attestor.outputDigest(
             responseHash,
-            ASSET,
-            IBA.Recommendation.BUY,
+            loanIdHash,
+            riskScore,
             CONFIDENCE,
-            PRICE_AT_ISSUE,
             validUntil,
             agent,
             MODEL_KEY
@@ -120,10 +116,9 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
 
         attestor.commitInferenceOutput(
             INVOCATION_ID,
-            ASSET,
-            IBA.Recommendation.BUY,
+            loanIdHash,
+            riskScore,
             CONFIDENCE,
-            PRICE_AT_ISSUE,
             validUntil,
             agent,
             responseHash,
@@ -131,15 +126,13 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
         );
     }
 
-    function test_endToEnd_buyOutputLossTriggersPayout() public {
-        uint64 validUntil;
-        bytes32 responseHash;
-        (validUntil, responseHash) = _commitBuyOutput();
+    function test_endToEnd_highRiskPredictionWhenLoanStaysSafeTriggersPayout() public {
+        uint64 validUntil = _commitRiskOutput(keccak256(bytes("loan_demo_safe")), 82, HIGH_RISK_RESPONSE_HASH);
 
         IBA.InferenceOutput memory stored = attestor.outputOf(INVOCATION_ID);
-        assertEq(uint8(stored.recommendation), uint8(IBA.Recommendation.BUY));
-        assertEq(stored.priceAtIssue, PRICE_AT_ISSUE);
-        assertEq(stored.responseHash, responseHash);
+        assertEq(stored.loanIdHash, keccak256(bytes("loan_demo_safe")));
+        assertEq(stored.riskScore, 82);
+        assertEq(stored.responseHash, HIGH_RISK_RESPONSE_HASH);
 
         vm.prank(trader);
         underwriter.purchaseCoverage(INVOCATION_ID, COVERAGE_AMOUNT, ESCROW_ID);
@@ -149,95 +142,72 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
         assertEq(coverage.buyer, trader);
 
         vm.warp(validUntil + 1);
-        oracle.setLatest(ASSET, (PRICE_AT_ISSUE * 95) / 100);
+        oracle.setDefaultOutcome("loan_demo_safe", false);
 
         vm.expectEmit(true, true, false, false);
-        emit IBU.ClaimPaid(INVOCATION_ID, trader, 0, 0, 0);
+        emit IBU.ClaimPaid(INVOCATION_ID, trader, 0, 0, false);
         vm.prank(trader);
-        underwriter.claimLoss(INVOCATION_ID);
+        underwriter.claimLoss(INVOCATION_ID, "loan_demo_safe");
 
         assertEq(escrow.callCount(), 1);
         (uint256 escrowId, address recipient, uint256 payout) = escrow.calls(0);
         assertEq(escrowId, ESCROW_ID);
         assertEq(recipient, trader);
-        assertEq(payout, (COVERAGE_AMOUNT * 500) / 10_000);
+        assertEq(payout, COVERAGE_AMOUNT);
     }
 
-    function test_buyOutput_priceUp_noPayout() public {
-        (uint64 validUntil,) = _commitBuyOutput();
+    function test_highRiskPredictionWhenLoanDefaultsDoesNotPay() public {
+        uint64 validUntil = _commitRiskOutput(LOAN_ID_HASH, 82, HIGH_RISK_RESPONSE_HASH);
 
         vm.prank(trader);
         underwriter.purchaseCoverage(INVOCATION_ID, COVERAGE_AMOUNT, ESCROW_ID);
 
         vm.warp(validUntil + 1);
-        oracle.setLatest(ASSET, (PRICE_AT_ISSUE * 110) / 100);
+        oracle.setDefaultOutcome("loan_demo_risky", true);
 
         vm.prank(trader);
         vm.expectRevert();
-        underwriter.claimLoss(INVOCATION_ID);
+        underwriter.claimLoss(INVOCATION_ID, "loan_demo_risky");
     }
 
-    function test_buyOutput_smallLossBelowThreshold_noPayout() public {
-        (uint64 validUntil,) = _commitBuyOutput();
+    function test_lowRiskPredictionWhenLoanStaysSafeDoesNotPay() public {
+        uint64 validUntil = _commitRiskOutput(keccak256(bytes("loan_demo_safe")), 24, LOW_RISK_RESPONSE_HASH);
 
         vm.prank(trader);
         underwriter.purchaseCoverage(INVOCATION_ID, COVERAGE_AMOUNT, ESCROW_ID);
 
         vm.warp(validUntil + 1);
-        oracle.setLatest(ASSET, (PRICE_AT_ISSUE * 999) / 1000);
+        oracle.setDefaultOutcome("loan_demo_safe", false);
 
         vm.prank(trader);
         vm.expectRevert();
-        underwriter.claimLoss(INVOCATION_ID);
+        underwriter.claimLoss(INVOCATION_ID, "loan_demo_safe");
     }
 
-    function test_sellOutput_priceUp_triggersPayout() public {
-        uint64 validUntil = uint64(block.timestamp + SIGNAL_VALIDITY);
-        bytes32 digest = attestor.outputDigest(
-            RAW_RESPONSE_HASH,
-            ASSET,
-            IBA.Recommendation.SELL,
-            CONFIDENCE,
-            PRICE_AT_ISSUE,
-            validUntil,
-            agent,
-            MODEL_KEY
-        );
-        _verifyOutput(digest, uint64(block.timestamp + 5 minutes), uint64(block.timestamp + 10 minutes));
-        attestor.commitInferenceOutput(
-            INVOCATION_ID,
-            ASSET,
-            IBA.Recommendation.SELL,
-            CONFIDENCE,
-            PRICE_AT_ISSUE,
-            validUntil,
-            agent,
-            RAW_RESPONSE_HASH,
-            MODEL_KEY
-        );
+    function test_thresholdScoreCountsAsHighRisk() public {
+        uint64 validUntil = _commitRiskOutput(keccak256(bytes("loan_demo_safe")), 50, keccak256(abi.encode(uint256(50))));
 
         vm.prank(trader);
         underwriter.purchaseCoverage(INVOCATION_ID, COVERAGE_AMOUNT, ESCROW_ID);
 
         vm.warp(validUntil + 1);
-        oracle.setLatest(ASSET, (PRICE_AT_ISSUE * 110) / 100);
+        oracle.setDefaultOutcome("loan_demo_safe", false);
 
         vm.prank(trader);
-        underwriter.claimLoss(INVOCATION_ID);
+        underwriter.claimLoss(INVOCATION_ID, "loan_demo_safe");
 
         assertEq(escrow.callCount(), 1);
         (,, uint256 payout) = escrow.calls(0);
-        assertEq(payout, (COVERAGE_AMOUNT * 1000) / 10_000);
+        assertEq(payout, COVERAGE_AMOUNT);
     }
 
     function test_commitInferenceOutput_revertsWhenResponseHashIsWrong() public {
         uint64 validUntil = uint64(block.timestamp + SIGNAL_VALIDITY);
         bytes32 digest = attestor.outputDigest(
-            RAW_RESPONSE_HASH,
-            ASSET,
-            IBA.Recommendation.BUY,
+            HIGH_RISK_RESPONSE_HASH,
+            LOAN_ID_HASH,
+            82,
             CONFIDENCE,
-            PRICE_AT_ISSUE,
             validUntil,
             agent,
             MODEL_KEY
@@ -248,10 +218,9 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
         vm.expectRevert(IBA.ResponseHashMismatch.selector);
         attestor.commitInferenceOutput(
             INVOCATION_ID,
-            ASSET,
-            IBA.Recommendation.BUY,
+            LOAN_ID_HASH,
+            82,
             CONFIDENCE,
-            PRICE_AT_ISSUE,
             validUntil,
             agent,
             keccak256("tampered"),
@@ -265,13 +234,12 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
         vm.expectRevert(IBA.InvocationNotVerified.selector);
         attestor.commitInferenceOutput(
             INVOCATION_ID,
-            ASSET,
-            IBA.Recommendation.BUY,
+            LOAN_ID_HASH,
+            82,
             CONFIDENCE,
-            PRICE_AT_ISSUE,
             validUntil,
             agent,
-            RAW_RESPONSE_HASH,
+            HIGH_RISK_RESPONSE_HASH,
             MODEL_KEY
         );
     }
@@ -283,32 +251,49 @@ contract BlindferenceDemoFlowIntegrationTest is Test {
     }
 
     function test_claimLoss_revertsBeforeOutputMaturity() public {
-        _commitBuyOutput();
+        uint64 validUntil = _commitRiskOutput(LOAN_ID_HASH, 82, HIGH_RISK_RESPONSE_HASH);
 
         vm.prank(trader);
         underwriter.purchaseCoverage(INVOCATION_ID, COVERAGE_AMOUNT, ESCROW_ID);
 
-        oracle.setLatest(ASSET, (PRICE_AT_ISSUE * 90) / 100);
+        oracle.setDefaultOutcome("loan_demo_risky", false);
 
         vm.prank(trader);
         vm.expectRevert(IBU.OutputNotMature.selector);
-        underwriter.claimLoss(INVOCATION_ID);
+        underwriter.claimLoss(INVOCATION_ID, "loan_demo_risky");
     }
 
     function test_claimLoss_doubleClaimReverts() public {
-        (uint64 validUntil,) = _commitBuyOutput();
+        uint64 validUntil = _commitRiskOutput(keccak256(bytes("loan_demo_safe")), 82, HIGH_RISK_RESPONSE_HASH);
 
         vm.prank(trader);
         underwriter.purchaseCoverage(INVOCATION_ID, COVERAGE_AMOUNT, ESCROW_ID);
 
         vm.warp(validUntil + 1);
-        oracle.setLatest(ASSET, (PRICE_AT_ISSUE * 90) / 100);
+        oracle.setDefaultOutcome("loan_demo_safe", false);
 
         vm.prank(trader);
-        underwriter.claimLoss(INVOCATION_ID);
+        underwriter.claimLoss(INVOCATION_ID, "loan_demo_safe");
 
         vm.prank(trader);
         vm.expectRevert(IBU.AlreadyClaimed.selector);
-        underwriter.claimLoss(INVOCATION_ID);
+        underwriter.claimLoss(INVOCATION_ID, "loan_demo_safe");
+    }
+
+    function test_lowRiskPredictionWhenLoanDefaultsTriggersPayout() public {
+        uint64 validUntil = _commitRiskOutput(LOAN_ID_HASH, 24, LOW_RISK_RESPONSE_HASH);
+
+        vm.prank(trader);
+        underwriter.purchaseCoverage(INVOCATION_ID, COVERAGE_AMOUNT, ESCROW_ID);
+
+        vm.warp(validUntil + 1);
+        oracle.setDefaultOutcome("loan_demo_risky", true);
+
+        vm.prank(trader);
+        underwriter.claimLoss(INVOCATION_ID, "loan_demo_risky");
+
+        assertEq(escrow.callCount(), 1);
+        (,, uint256 payout) = escrow.calls(0);
+        assertEq(payout, COVERAGE_AMOUNT);
     }
 }
