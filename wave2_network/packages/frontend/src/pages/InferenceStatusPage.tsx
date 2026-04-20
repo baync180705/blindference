@@ -133,9 +133,18 @@ export function InferenceStatusPage() {
             ) : null}
           </section>
 
-          {(status.result_commit_tx || status.escrow_creation_tx || status.coverage_purchase_tx || status.escrow_release_tx) ? (
+          {(
+            status.result_commit_tx ||
+            status.escrow_creation_tx ||
+            status.coverage_purchase_tx ||
+            status.dispute_submission_tx ||
+            status.dispute_resolution_tx ||
+            status.escrow_release_tx
+          ) ? (
             <OnChainEvidence
               coveragePurchaseTx={status.coverage_purchase_tx}
+              disputeResolutionTx={status.dispute_resolution_tx}
+              disputeSubmissionTx={status.dispute_submission_tx}
               escrowCreationTx={status.escrow_creation_tx}
               escrowReleaseTx={status.escrow_release_tx}
               resultCommitTx={status.result_commit_tx}

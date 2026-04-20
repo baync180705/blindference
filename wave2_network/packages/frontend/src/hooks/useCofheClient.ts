@@ -24,6 +24,7 @@ export function useCofheClient() {
       try {
         const config = createCofheConfig({
           supportedChains: [chains.arbSepolia, chains.hardhat],
+          useWorkers: false,
         })
         const cofheClient = createCofheClient(config)
         await cofheClient.connect(publicClient, walletClient)

@@ -34,6 +34,8 @@ export type DemoStatus = {
   escrow_creation_tx?: string
   escrow_release_tx?: string
   coverage_purchase_tx?: string
+  dispute_submission_tx?: string
+  dispute_resolution_tx?: string
   timestamps: Record<string, number>
   developer_address: string
   raw: BackendInferenceRequest
@@ -145,6 +147,12 @@ function mapRequestToStatus(request: BackendInferenceRequest, coverageRecommenda
       (request.status === 'accepted' ? hashLike(request.chain_tx_hash) : undefined),
     coverage_purchase_tx: hashLike(
       typeof metadata.coverage_purchase_tx === 'string' ? metadata.coverage_purchase_tx : undefined,
+    ),
+    dispute_submission_tx: hashLike(
+      typeof metadata.dispute_submission_tx === 'string' ? metadata.dispute_submission_tx : undefined,
+    ),
+    dispute_resolution_tx: hashLike(
+      typeof metadata.dispute_resolution_tx === 'string' ? metadata.dispute_resolution_tx : undefined,
     ),
     timestamps: buildTimestamps(request),
     developer_address: request.developer_address,

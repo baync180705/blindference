@@ -236,7 +236,9 @@ class ChainService:
         invocation_id = self.web3_client.task_id_to_invocation_id(task_id)
         if self.settings.MOCK_CHAIN:
             status = "verified" if accepted else "escalated"
-            tx_hash = self.web3_client.keccak_text(f"mock-chain:{task_id}:{result_hash}:{status}")
+            tx_hash = self.web3_client.ensure_hex_prefix(
+                self.web3_client.keccak_text(f"mock-chain:{task_id}:{result_hash}:{status}")
+            )
             self._mock_invocations[invocation_id] = {
                 **self._mock_invocations.get(invocation_id, {}),
                 "status": status,
@@ -369,7 +371,11 @@ class ChainService:
             }
             document_hash = self.web3_client.keccak_text(json.dumps(metadata, sort_keys=True))
             if self.settings.MOCK_CHAIN:
-                tx_result = {"tx_hash": self.web3_client.keccak_text(f"mock-attestation:{operator_address}:{now}")}
+                tx_result = {
+                    "tx_hash": self.web3_client.ensure_hex_prefix(
+                        self.web3_client.keccak_text(f"mock-attestation:{operator_address}:{now}")
+                    )
+                }
             else:
                 digest = await asyncio.to_thread(
                     self.node_attestation_registry.digest,

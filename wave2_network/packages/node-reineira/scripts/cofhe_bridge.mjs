@@ -1,6 +1,7 @@
 import { createCofheClient, createCofheConfig } from '@cofhe/sdk/node'
 import { FheTypes } from '@cofhe/sdk'
 import { chains } from '@cofhe/sdk/chains'
+import { PermitUtils } from '@cofhe/sdk/permits'
 import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia, hardhat } from 'viem/chains'
@@ -59,13 +60,25 @@ function resolveFheType(utype) {
   return mapping[normalized]
 }
 
+function normalizePrivateKey(privateKey) {
+  let normalized = String(privateKey ?? '').trim().replace(/^['"]|['"]$/g, '')
+  if (normalized.startsWith('0x') || normalized.startsWith('0X')) {
+    normalized = normalized.slice(2)
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(normalized)) {
+    throw new Error(`Invalid operator private key format: expected 64 hex chars, got ${normalized.length}`)
+  }
+  return `0x${normalized.toLowerCase()}`
+}
+
 async function createClient({ rpcUrl, privateKey, chainId }) {
   const { cofheChain, viemChain } = resolveChains(chainId)
   const config = createCofheConfig({
     supportedChains: [cofheChain],
   })
   const client = createCofheClient(config)
-  const account = privateKeyToAccount(privateKey)
+  const normalizedPrivateKey = normalizePrivateKey(privateKey)
+  const account = privateKeyToAccount(normalizedPrivateKey)
   const publicClient = createPublicClient({
     chain: viemChain,
     transport: http(rpcUrl),
@@ -82,20 +95,32 @@ async function createClient({ rpcUrl, privateKey, chainId }) {
 
 async function decryptForView(payload) {
   const { client, publicClient, walletClient } = await createClient(payload)
-
   if (!payload.permit) {
     throw new Error('Missing shared permit for decryption')
   }
 
-  await client.permits.importShared(payload.permit, { publicClient, walletClient })
+  const recipientPermit = await client.permits.importShared(payload.permit, { publicClient, walletClient })
   const values = []
 
-  for (const feature of payload.features ?? []) {
-    const unsealed = await client
-      .decryptForView(BigInt(feature.ctHash), resolveFheType(feature.utype))
-      .withPermit()
-      .execute()
-    values.push(unsealed.toString())
+  try {
+    for (const feature of payload.features ?? []) {
+      const unsealed = await client
+        .decryptForView(BigInt(feature.ctHash), resolveFheType(feature.utype))
+        .withPermit(recipientPermit)
+        .execute()
+      values.push(unsealed.toString())
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('403')) {
+      throw new Error(
+        'Threshold network rejected decryptForView with HTTP 403. ' +
+        'The sharing permit imported correctly, but the ciphertext still does not appear to ' +
+        'have issuer ACL access on-chain. This request likely skipped BlindferenceInputVault, ' +
+        'or the request was submitted before the vault transaction was mined.'
+      )
+    }
+    throw error
   }
 
   return { values }
@@ -113,7 +138,7 @@ async function createSharingPermit(payload) {
   )
 
   return {
-    permit: client.permits.serialize(permit),
+    permit: PermitUtils.export(permit),
   }
 }
 

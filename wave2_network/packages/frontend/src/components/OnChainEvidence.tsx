@@ -6,9 +6,19 @@ interface OnChainEvidenceProps {
   escrowCreationTx?: string;
   escrowReleaseTx?: string;
   coveragePurchaseTx?: string;
+  disputeSubmissionTx?: string;
+  disputeResolutionTx?: string;
 }
 
-export function OnChainEvidence({ taskId, resultCommitTx, escrowCreationTx, escrowReleaseTx, coveragePurchaseTx }: OnChainEvidenceProps) {
+export function OnChainEvidence({
+  taskId,
+  resultCommitTx,
+  escrowCreationTx,
+  escrowReleaseTx,
+  coveragePurchaseTx,
+  disputeSubmissionTx,
+  disputeResolutionTx,
+}: OnChainEvidenceProps) {
   const renderTx = (label: string, txHash?: string) => {
     if (!txHash) return null;
     return (
@@ -33,6 +43,8 @@ export function OnChainEvidence({ taskId, resultCommitTx, escrowCreationTx, escr
         {renderTx('Coverage Plan', coveragePurchaseTx)}
         {renderTx('Escrow Created', escrowCreationTx)}
         {renderTx('Result Commitment', resultCommitTx)}
+        {renderTx('Dispute Submitted', disputeSubmissionTx)}
+        {renderTx('Dispute Resolution', disputeResolutionTx)}
         {renderTx('Escrow Released', escrowReleaseTx)}
       </div>
     </section>

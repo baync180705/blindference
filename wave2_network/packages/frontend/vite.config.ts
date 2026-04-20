@@ -33,7 +33,7 @@ export default defineConfig(({mode}) => {
       format: 'es',
     },
     optimizeDeps: {
-      exclude: ['@cofhe/sdk', '@cofhe/sdk/web', '@cofhe/sdk/chains', 'tfhe', 'tweetnacl'],
+      // exclude: ['@cofhe/sdk', '@cofhe/sdk/web', '@cofhe/sdk/chains', 'tfhe', 'tweetnacl'],
     },
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),

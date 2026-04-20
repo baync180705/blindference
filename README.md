@@ -178,8 +178,6 @@ blindference/
     ├── packages/frontend/            Active Blindference frontend
     ├── packages/node-reineira/       Leader / verifier node runtime
     ├── packages/fhe-mocks/           Optional local FHE helpers
-    ├── packages/sdk/
-    ├── packages/mcp-server/
     └── protocol/                     Upstream Reineira reference code
 ```
 
@@ -271,10 +269,10 @@ ICL_PRIVATE_KEY=
 COFHE_RPC_URL=https://testnet-cofhe.fhenix.zone
 COFHE_CHAIN_ID=421614
 DEFAULT_VERIFIER_COUNT=2
-BLINDFERENCE_ATTESTOR_ADDRESS=0x...
-BLINDFERENCE_UNDERWRITER_ADDRESS=0x...
-BLINDFERENCE_AGENT_ADDRESS=0x...
-MOCK_ORACLE_ADDRESS=0x...
+BLINDFERENCE_ATTESTOR_ADDRESS=0x74454F689F28EfbEF6Ef9F3F14e56ac62CA8EC49
+BLINDFERENCE_UNDERWRITER_ADDRESS=0xcbbdcb1b42DE4Ed52f7ceD752c65652EE317B601
+BLINDFERENCE_AGENT_ADDRESS=0xc9208B8aCAaD3abFc955a575719BB8F21640A6fE
+MOCK_ORACLE_ADDRESS=0xDe9AE4b048bF320Db6492e2AfD0516392EBA05Fc
 DEMO_OPERATOR_PRIVATE_KEYS=
 MOCK_CHAIN=false
 ```
@@ -292,8 +290,11 @@ BLINDFERENCE_NODE_GROQ_API_KEY=
 BLINDFERENCE_NODE_GEMINI_API_KEY=
 BLINDFERENCE_NODE_MOCK_CLOUD_INFERENCE=false
 BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY=
-BLINDFERENCE_NODE_COFHE_RPC_URL=https://testnet-cofhe.fhenix.zone
+BLINDFERENCE_NODE_RPC_URL=https://sepolia-rollup.arbitrum.io/rpc
 BLINDFERENCE_NODE_COFHE_CHAIN_ID=421614
+BLINDFERENCE_NODE_CALLBACK_HOST=127.0.0.1
+BLINDFERENCE_NODE_CALLBACK_PORT=9101
+BLINDFERENCE_NODE_CALLBACK_PUBLIC_URL=
 ```
 
 ### Frontend
@@ -304,7 +305,8 @@ File: [`wave2_network/packages/frontend/.env.example`](./wave2_network/packages/
 VITE_ICL_API_URL=http://localhost:8000
 VITE_CHAIN_ID=421614
 VITE_WALLET_CONNECT_PROJECT_ID=
-VITE_BLINDFERENCE_AGENT_ADDRESS=0x...
+VITE_BLINDFERENCE_AGENT_ADDRESS=0xc9208B8aCAaD3abFc955a575719BB8F21640A6fE
+VITE_BLINDFERENCE_INPUT_VAULT_ADDRESS=0x8dD7B2A9B69C76A69d33B2DF46426Cbe657a902b
 ```
 
 ### Contracts
@@ -332,6 +334,7 @@ Before running the demo, confirm all of the following:
 - all three operator wallets have Sepolia ETH
 - the node runtime has valid Groq or Gemini credentials
 - the frontend points to the correct ICL base URL
+- the frontend points to the deployed `BlindferenceInputVault`
 - the user wallet is connected to Arbitrum Sepolia
 
 ## Installation
@@ -413,40 +416,67 @@ Leader:
 
 ```bash
 cd wave2_network/packages/node-reineira
-source ../icl/.venv/bin/activate
-BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY=<leader_private_key> \
-BLINDFERENCE_NODE_ICL_BASE_URL=http://127.0.0.1:8000 \
-PYTHONPATH=src \
-python -m blindference_node.cli start
+set -a
+source ../icl/.env
+set +a
+export BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY="$DEMO_OPERATOR_PRIVATE_KEY1"
+export BLINDFERENCE_NODE_RPC_URL="$ARBITRUM_SEPOLIA_RPC"
+export BLINDFERENCE_NODE_CALLBACK_PORT=9101
+export BLINDFERENCE_NODE_CALLBACK_PUBLIC_URL=http://127.0.0.1:9101
+export BLINDFERENCE_NODE_ICL_BASE_URL=http://127.0.0.1:8000
+export BLINDFERENCE_NODE_COFHE_CHAIN_ID="$COFHE_CHAIN_ID"
+export BLINDFERENCE_NODE_GROQ_API_KEY="$GROQ_API_KEY"
+export BLINDFERENCE_NODE_GEMINI_API_KEY="$GOOGLE_API_KEY"
+export BLINDFERENCE_NODE_MOCK_CLOUD_INFERENCE=false
+export PYTHONPATH=src
+../icl/.venv/bin/python -m blindference_node.cli start
 ```
 
 Verifier 1:
 
 ```bash
 cd wave2_network/packages/node-reineira
-source ../icl/.venv/bin/activate
-BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY=<verifier_one_private_key> \
-BLINDFERENCE_NODE_ICL_BASE_URL=http://127.0.0.1:8000 \
-PYTHONPATH=src \
-python -m blindference_node.cli start
+set -a
+source ../icl/.env
+set +a
+export BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY="$DEMO_OPERATOR_PRIVATE_KEY2"
+export BLINDFERENCE_NODE_RPC_URL="$ARBITRUM_SEPOLIA_RPC"
+export BLINDFERENCE_NODE_CALLBACK_PORT=9102
+export BLINDFERENCE_NODE_CALLBACK_PUBLIC_URL=http://127.0.0.1:9102
+export BLINDFERENCE_NODE_ICL_BASE_URL=http://127.0.0.1:8000
+export BLINDFERENCE_NODE_COFHE_CHAIN_ID="$COFHE_CHAIN_ID"
+export BLINDFERENCE_NODE_GROQ_API_KEY="$GROQ_API_KEY"
+export BLINDFERENCE_NODE_GEMINI_API_KEY="$GOOGLE_API_KEY"
+export BLINDFERENCE_NODE_MOCK_CLOUD_INFERENCE=false
+export PYTHONPATH=src
+../icl/.venv/bin/python -m blindference_node.cli start
 ```
 
 Verifier 2:
 
 ```bash
 cd wave2_network/packages/node-reineira
-source ../icl/.venv/bin/activate
-BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY=<verifier_two_private_key> \
-BLINDFERENCE_NODE_ICL_BASE_URL=http://127.0.0.1:8000 \
-PYTHONPATH=src \
-python -m blindference_node.cli start
+set -a
+source ../icl/.env
+set +a
+export BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY="$DEMO_OPERATOR_PRIVATE_KEY3"
+export BLINDFERENCE_NODE_RPC_URL="$ARBITRUM_SEPOLIA_RPC"
+export BLINDFERENCE_NODE_CALLBACK_PORT=9103
+export BLINDFERENCE_NODE_CALLBACK_PUBLIC_URL=http://127.0.0.1:9103
+export BLINDFERENCE_NODE_ICL_BASE_URL=http://127.0.0.1:8000
+export BLINDFERENCE_NODE_COFHE_CHAIN_ID="$COFHE_CHAIN_ID"
+export BLINDFERENCE_NODE_GROQ_API_KEY="$GROQ_API_KEY"
+export BLINDFERENCE_NODE_GEMINI_API_KEY="$GOOGLE_API_KEY"
+export BLINDFERENCE_NODE_MOCK_CLOUD_INFERENCE=false
+export PYTHONPATH=src
+../icl/.venv/bin/python -m blindference_node.cli start
 ```
 
 ### 4. Start the Frontend
 
 ```bash
 cd wave2_network/packages/frontend
-npm run dev
+npm run dev -- --force
 ```
 
 Open:
@@ -487,25 +517,34 @@ Run the same command three times, once per operator key:
 
 ```bash
 cd wave2_network/packages/node-reineira
-source ../icl/.venv/bin/activate
+set -a
+source ../icl/.env
+set +a
 BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY=<operator_private_key> \
+BLINDFERENCE_NODE_RPC_URL="$ARBITRUM_SEPOLIA_RPC" \
+BLINDFERENCE_NODE_CALLBACK_PORT=<9101-or-9102-or-9103> \
+BLINDFERENCE_NODE_CALLBACK_PUBLIC_URL=http://127.0.0.1:<9101-or-9102-or-9103> \
 BLINDFERENCE_NODE_ICL_BASE_URL=http://127.0.0.1:8000 \
+BLINDFERENCE_NODE_COFHE_CHAIN_ID="$COFHE_CHAIN_ID" \
+BLINDFERENCE_NODE_GROQ_API_KEY="$GROQ_API_KEY" \
+BLINDFERENCE_NODE_GEMINI_API_KEY="$GOOGLE_API_KEY" \
 BLINDFERENCE_NODE_MOCK_CLOUD_INFERENCE=false \
 PYTHONPATH=src \
-python -m blindference_node.cli start
+../icl/.venv/bin/python -m blindference_node.cli start
 ```
 
 Each node process should use:
 
 - a distinct funded operator key
-- `BLINDFERENCE_NODE_COFHE_RPC_URL=https://testnet-cofhe.fhenix.zone`
+- a distinct callback port and public URL
+- `BLINDFERENCE_NODE_RPC_URL=https://sepolia-rollup.arbitrum.io/rpc`
 - either Groq or Gemini API credentials
 
 ### 5. Start the Frontend
 
 ```bash
 cd wave2_network/packages/frontend
-npm run dev
+npm run dev -- --force
 ```
 
 ### 6. Demo in the Browser
@@ -515,6 +554,7 @@ npm run dev
 3. Fill the risk-scoring form
 4. Submit the encrypted request
 5. Watch the lifecycle:
+   - input vault transaction
    - quorum preview
    - permit creation
    - leader submission
@@ -547,6 +587,10 @@ The higher-level design summary is tracked in:
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
 
+The detailed implementation and debugging handoff for future engineers / LLMs is tracked in:
+
+- [LLM_CONTEXT.md](./LLM_CONTEXT.md)
+
 The monorepo package-level runbook is tracked in:
 
 - [wave2_network/README.md](./wave2_network/README.md)
@@ -554,10 +598,11 @@ The monorepo package-level runbook is tracked in:
 ## Current Status
 
 - Core Reineira-aligned protocol contracts are deployed on Arbitrum Sepolia.
-- Blindference demo contracts are deployed on Arbitrum Sepolia.
+- Blindference demo contracts, including `BlindferenceInputVault`, are deployed on Arbitrum Sepolia.
 - The frontend has been transplanted into the active monorepo and wired to the Wave 2 backend.
 - The frontend supports live quorum progress rather than only post-commit state.
 - The stack supports real CoFHE browser encryption and permit-aware request flow.
+- The live CoFHE flow now stores encrypted inputs in `BlindferenceInputVault` before sharing permits are created.
 - The settlement surface includes mock escrow release evidence for a complete demo narrative.
 
 ## Why Reineira and Fhenix Matter
@@ -580,5 +625,6 @@ Together, they let Blindference demonstrate something stronger than a private in
 
 - Reineira: https://reineira.xyz/
 - Fhenix / CoFHE: https://www.fhenix.io/
+- LLM / engineering handoff: [LLM_CONTEXT.md](./LLM_CONTEXT.md)
 - Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md)
 - Deployments: [DEPLOYMENT.md](./DEPLOYMENT.md)

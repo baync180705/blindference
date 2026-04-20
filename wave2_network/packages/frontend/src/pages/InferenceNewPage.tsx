@@ -1,9 +1,13 @@
 import { useNavigate } from 'react-router-dom'
-import { useAccount } from 'wagmi'
+import { useAccount, usePublicClient, useWalletClient } from 'wagmi'
 import { Lock, ShieldAlert } from 'lucide-react'
+import { PermitUtils } from '@cofhe/sdk/permits'
+import type { Hex } from 'viem'
+import axios from 'axios'
 
 import { inferenceApi } from '../api/inferenceApi'
 import { useCofheClient } from '../hooks/useCofheClient'
+import { readStoredRiskInputHandles, storeEncryptedRiskInputsInVault } from '../lib/inputVault'
 import { useInferenceStore } from '../stores/inferenceStore'
 import { encryptRiskFeatures } from '../utils/encryption'
 import { cn } from '../utils/helpers'
@@ -38,6 +42,8 @@ const MODEL_BINDINGS = {
 export function InferenceNewPage() {
   const navigate = useNavigate()
   const { address } = useAccount()
+  const publicClient = usePublicClient()
+  const { data: walletClient } = useWalletClient()
   const { client, isReady } = useCofheClient()
   const store = useInferenceStore()
 
@@ -56,10 +62,21 @@ export function InferenceNewPage() {
       store.setError('Connect your wallet and wait for CoFHE to initialize.')
       return
     }
+    if (!walletClient || !publicClient) {
+      store.setError('Wallet client is not available yet.')
+      return
+    }
+
+    const inputVaultAddress = import.meta.env.VITE_BLINDFERENCE_INPUT_VAULT_ADDRESS as Hex | undefined
+    if (!inputVaultAddress) {
+      store.setError('VITE_BLINDFERENCE_INPUT_VAULT_ADDRESS is not configured.')
+      return
+    }
 
     try {
       store.setError(null)
       store.setIsEncrypting(true)
+      const loanId = `loan_${Date.now()}`
 
       const encrypted = await encryptRiskFeatures(client, {
         creditScore: store.creditScore,
@@ -67,6 +84,29 @@ export function InferenceNewPage() {
         accountAge: store.accountAge,
         prevDefaults: store.prevDefaults,
       })
+
+      const inputVaultTx = await storeEncryptedRiskInputsInVault({
+        encryptedInputs: encrypted,
+        loanId,
+        publicClient,
+        vaultAddress: inputVaultAddress,
+        walletClient,
+      })
+
+      const storedVaultInputs = await readStoredRiskInputHandles({
+        loanId,
+        publicClient,
+        vaultAddress: inputVaultAddress,
+      })
+      if (storedVaultInputs.owner.toLowerCase() !== address.toLowerCase()) {
+        throw new Error('BlindferenceInputVault stored handles for a different owner than the connected wallet.')
+      }
+
+      const vaultBackedEncryptedInput = encrypted.map((item, index) => ({
+        ctHash: storedVaultInputs.handles[index].toString(),
+        utype: item.utype,
+        signature: item.signature,
+      }))
 
       const quorumPreview = await inferenceApi.getQuorumPreview({
         model_id: currentModel.modelId,
@@ -85,7 +125,7 @@ export function InferenceNewPage() {
           })
           return {
             node: nodeAddress,
-            permit: client.permits.serialize(sharingPermit) as Record<string, unknown>,
+            permit: PermitUtils.export(sharingPermit),
           }
         }),
       )
@@ -95,14 +135,12 @@ export function InferenceNewPage() {
 
       const response = await inferenceApi.submit({
         model_id: currentModel.modelId,
-        encrypted_input: encrypted.map((item) => ({
-          ctHash: item.ctHash.toString(),
-          utype: item.utype,
-          signature: item.signature,
-        })),
+        encrypted_input: vaultBackedEncryptedInput,
         permits,
+        leader_address: quorumPreview.data.leader,
+        verifier_addresses: quorumPreview.data.verifiers,
         feature_types: ['uint32', 'uint64', 'uint32', 'uint8'],
-        loan_id: `loan_${Date.now()}`,
+        loan_id: loanId,
         coverage_type: store.coverageEnabled ? 'HALLUCINATION' : null,
         max_fee_gnk: totalDisplay,
         developer_address: address,
@@ -112,6 +150,10 @@ export function InferenceNewPage() {
         metadata: {
           coverage_requested: store.coverageEnabled,
           encryption_mode: 'cofhe',
+          input_vault_address: inputVaultAddress,
+          input_vault_tx: inputVaultTx,
+          input_vault_owner: storedVaultInputs.owner,
+          input_vault_stored_at: storedVaultInputs.storedAt.toString(),
           vertical: 'blindference-risk-demo',
           provider: currentModel.provider,
           model: currentModel.model,
@@ -121,6 +163,13 @@ export function InferenceNewPage() {
       store.setRequestId(response.data.request_id)
       navigate(`/inference/${response.data.request_id}`)
     } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const detail = error.response?.data?.detail
+        if (typeof detail === 'string' && detail.trim()) {
+          store.setError(detail)
+          return
+        }
+      }
       store.setError(error instanceof Error ? error.message : 'Failed to submit request.')
     } finally {
       store.setIsSubmitting(false)

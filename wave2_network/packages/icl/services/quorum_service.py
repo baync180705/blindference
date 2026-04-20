@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import logging
+
+import httpx
 
 from db.collections import (
     DISPUTES,
     INFERENCE_REQUESTS,
+    NODE_RUNTIMES,
     PERMITS,
     QUORUM_ASSIGNMENTS,
     QUORUM_CERTIFICATES,
@@ -18,6 +22,7 @@ from models.db_models import (
     PermitRecord,
     QuorumAssignmentRecord,
     QuorumCertificateRecord,
+    NodeRuntimeRecord,
     VerifierVerdictRecord,
 )
 from models.request_models import (
@@ -40,6 +45,9 @@ from models.response_models import (
 from services.chain_service import ChainService
 from services.node_selector import NodeSelector
 from services.verdict_aggregator import VerdictAggregator
+
+
+logger = logging.getLogger("blindference.icl.quorum")
 
 
 class QuorumService:
@@ -69,11 +77,12 @@ class QuorumService:
         )
 
     async def create_request(self, payload: InferenceRequestCreate) -> InferenceRequestResponse:
-        quorum = await self.preview_quorum(
+        selected_quorum = await self.preview_quorum(
             min_tier=payload.min_tier,
             zdr_required=payload.zdr_required,
             verifier_count=payload.verifier_count,
         )
+        quorum = self._resolve_requested_quorum(payload, selected_quorum)
         encrypted_features = payload.normalized_encrypted_features()
         if not encrypted_features:
             raise ValueError("encrypted_input or encrypted_features is required")
@@ -162,13 +171,17 @@ class QuorumService:
         metadata["task_registered_tx"] = registration_tx_hash
         metadata["escrow_creation_tx"] = (
             registration_tx_hash
-            or self.chain_service.web3_client.keccak_text(f"mock-escrow-create:{request_record.task_id}")
+            or self.chain_service.web3_client.ensure_hex_prefix(
+                self.chain_service.web3_client.keccak_text(f"mock-escrow-create:{request_record.task_id}")
+            )
         )
         if payload.coverage_type:
             metadata["coverage_id"] = metadata.get("coverage_id") or f"cov_{request_record.request_id[:10]}"
             metadata["coverage_purchase_tx"] = (
                 registration_tx_hash
-                or self.chain_service.web3_client.keccak_text(f"mock-coverage-purchase:{request_record.task_id}")
+                or self.chain_service.web3_client.ensure_hex_prefix(
+                    self.chain_service.web3_client.keccak_text(f"mock-coverage-purchase:{request_record.task_id}")
+                )
             )
         await self.database[INFERENCE_REQUESTS].update_one(
             {"request_id": request_record.request_id},
@@ -179,6 +192,7 @@ class QuorumService:
                 }
             },
         )
+        await self._dispatch_request_to_quorum(request_record.request_id)
         return await self.get_request(request_record.request_id)
 
     async def list_requests(self) -> list[InferenceRequestResponse]:
@@ -188,6 +202,43 @@ class QuorumService:
             documents.append(document)
         documents.sort(key=lambda document: document["created_at"], reverse=True)
         return [await self._to_response(document) for document in documents]
+
+    async def register_node_runtime(self, *, operator_address: str, callback_url: str) -> dict[str, str]:
+        checksum_address = self.chain_service.web3_client.checksum_address(operator_address)
+        record = NodeRuntimeRecord(
+            operator_address=checksum_address,
+            callback_url=callback_url.rstrip("/"),
+        )
+        await self.database[NODE_RUNTIMES].update_one(
+            {"operator_address": checksum_address},
+            {
+                "$set": {
+                    **record.model_dump(),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+            upsert=True,
+        )
+        await self._dispatch_pending_tasks_for_node(checksum_address)
+        return {
+            "status": "registered",
+            "operator_address": checksum_address,
+            "callback_url": callback_url.rstrip("/"),
+        }
+
+    async def list_node_runtimes(self) -> list[dict[str, str]]:
+        cursor = self.database[NODE_RUNTIMES].find({})
+        runtimes: list[dict[str, str]] = []
+        async for document in cursor:
+            document.pop("_id", None)
+            runtimes.append(
+                {
+                    "operator_address": document["operator_address"],
+                    "callback_url": document["callback_url"],
+                }
+            )
+        runtimes.sort(key=lambda runtime: runtime["operator_address"])
+        return runtimes
 
     async def get_request(self, request_id: str) -> InferenceRequestResponse:
         document = await self.database[INFERENCE_REQUESTS].find_one({"request_id": request_id})
@@ -251,6 +302,7 @@ class QuorumService:
                 }
             },
         )
+        await self._dispatch_request_to_quorum(request_document["request_id"], [target_node])
 
         return {
             "status": "permit_attached",
@@ -573,9 +625,32 @@ class QuorumService:
             {"$set": record.model_dump()},
             upsert=True,
         )
+        metadata = dict(request_document.get("metadata", {}))
+        dispute_submission_tx = self.chain_service.web3_client.ensure_hex_prefix(
+            self.chain_service.web3_client.keccak_text(
+                f"mock-dispute-submit:{request_document['task_id']}:{payload.evidence_hash}"
+            )
+        )
+        dispute_resolution_tx = self.chain_service.web3_client.ensure_hex_prefix(
+            self.chain_service.web3_client.keccak_text(
+                f"mock-dispute-resolve:{request_document['task_id']}:{payload.evidence_hash}"
+            )
+        )
+        metadata["dispute_submission_tx"] = dispute_submission_tx
+        metadata["dispute_resolution_tx"] = dispute_resolution_tx
+        metadata["dispute_resolution_mode"] = "mock-visible-demo"
+        metadata["dispute_opened_at"] = datetime.now(timezone.utc).isoformat()
+        if request_document.get("coverage_type") and not metadata.get("escrow_release_tx"):
+            metadata["escrow_release_tx"] = dispute_resolution_tx
         await self.database[INFERENCE_REQUESTS].update_one(
             {"request_id": request_id},
-            {"$set": {"status": "disputed", "updated_at": datetime.now(timezone.utc)}},
+            {
+                "$set": {
+                    "status": "disputed",
+                    "updated_at": datetime.now(timezone.utc),
+                    "metadata": metadata,
+                }
+            },
         )
         return record.model_dump()
 
@@ -690,6 +765,94 @@ class QuorumService:
             updated_at=request_document["updated_at"],
         )
 
+    async def _dispatch_request_to_quorum(
+        self,
+        request_id: str,
+        target_nodes: list[str] | None = None,
+    ) -> None:
+        response = await self.get_request(request_id)
+        request_payload = response.model_dump(mode="json")
+        leader_address = response.quorum.leader_address
+        verifier_addresses = list(response.quorum.verifier_addresses)
+
+        desired_nodes = {
+            self.chain_service.web3_client.checksum_address(address)
+            for address in (target_nodes or [leader_address, *verifier_addresses])
+        }
+        runtime_map = await self._get_runtime_map()
+
+        for node_address in desired_nodes:
+            callback_url = runtime_map.get(node_address)
+            if not callback_url:
+                logger.warning(
+                    "No runtime callback registered for operator=%s request_id=%s",
+                    node_address,
+                    request_id,
+                )
+                continue
+
+            role = "leader" if node_address == leader_address else "verifier"
+            if role == "leader" and response.leader_submission is not None:
+                continue
+
+            if role == "verifier":
+                matching_verdict = next(
+                    (
+                        verdict
+                        for verdict in response.verifier_verdicts
+                        if verdict.verifier_address.lower() == node_address.lower()
+                    ),
+                    None,
+                )
+                if matching_verdict and matching_verdict.submitted:
+                    continue
+
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    push_response = await client.post(
+                        f"{callback_url}/internal/task",
+                        json={
+                            "role": role,
+                            "request": request_payload,
+                        },
+                    )
+                    push_response.raise_for_status()
+                logger.info(
+                    "Dispatched request_id=%s task_id=%s role=%s to operator=%s callback=%s",
+                    response.request_id,
+                    response.task_id,
+                    role,
+                    node_address,
+                    callback_url,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to dispatch request_id=%s role=%s to operator=%s callback=%s",
+                    response.request_id,
+                    role,
+                    node_address,
+                    callback_url,
+                )
+
+    async def _dispatch_pending_tasks_for_node(self, operator_address: str) -> None:
+        checksum_address = self.chain_service.web3_client.checksum_address(operator_address)
+        cursor = self.database[INFERENCE_REQUESTS].find({"status": "queued"})
+        async for document in cursor:
+            if (
+                document.get("leader_address") == checksum_address
+                or checksum_address in document.get("verifier_addresses", [])
+            ):
+                await self._dispatch_request_to_quorum(document["request_id"], [checksum_address])
+
+    async def _get_runtime_map(self) -> dict[str, str]:
+        runtime_map: dict[str, str] = {}
+        cursor = self.database[NODE_RUNTIMES].find({})
+        async for document in cursor:
+            runtime_map[self.chain_service.web3_client.checksum_address(document["operator_address"])] = document[
+                "callback_url"
+            ]
+        return runtime_map
+
     def _serialize_permit(self, permit: str | dict) -> str:
         if isinstance(permit, str):
             return permit
@@ -730,4 +893,48 @@ class QuorumService:
             "node_address": permit_record.node_address,
             "permit": permit_record.permit,
             "status": permit_record.status,
+        }
+
+    def _resolve_requested_quorum(
+        self,
+        payload: InferenceRequestCreate,
+        selected_quorum: dict[str, list[str] | str],
+    ) -> dict[str, list[str] | str]:
+        if not payload.leader_address and not payload.verifier_addresses:
+            return selected_quorum
+
+        if not payload.leader_address:
+            raise ValueError("leader_address is required when overriding quorum selection")
+        if len(payload.verifier_addresses) != payload.verifier_count:
+            raise ValueError(
+                f"verifier_addresses must contain exactly {payload.verifier_count} addresses"
+            )
+
+        leader_address = self.chain_service.web3_client.checksum_address(payload.leader_address)
+        verifier_addresses = [
+            self.chain_service.web3_client.checksum_address(address)
+            for address in payload.verifier_addresses
+        ]
+        if leader_address in verifier_addresses:
+            raise ValueError("leader_address cannot also appear in verifier_addresses")
+
+        candidate_addresses = [
+            self.chain_service.web3_client.checksum_address(address)
+            for address in list(selected_quorum["candidate_addresses"])
+        ]
+        missing_addresses = [
+            address
+            for address in [leader_address, *verifier_addresses]
+            if address not in candidate_addresses
+        ]
+        if missing_addresses:
+            raise ValueError(
+                "requested quorum contains inactive or unavailable nodes: "
+                + ", ".join(missing_addresses)
+            )
+
+        return {
+            "leader_address": leader_address,
+            "verifier_addresses": verifier_addresses,
+            "candidate_addresses": candidate_addresses,
         }

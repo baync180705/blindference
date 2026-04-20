@@ -16,6 +16,9 @@ async def client() -> AsyncIterator[tuple[AsyncClient, object]]:
     _REQUEST_BUCKETS.clear()
     os.environ["MOCK_CHAIN"] = "true"
     os.environ["DEMO_OPERATOR_PRIVATE_KEYS"] = DEFAULT_DEMO_OPERATOR_KEYS
+    os.environ.pop("DEMO_OPERATOR_PRIVATE_KEY1", None)
+    os.environ.pop("DEMO_OPERATOR_PRIVATE_KEY2", None)
+    os.environ.pop("DEMO_OPERATOR_PRIVATE_KEY3", None)
     get_settings.cache_clear()
     app = create_app(get_settings())
 
@@ -26,4 +29,7 @@ async def client() -> AsyncIterator[tuple[AsyncClient, object]]:
 
     _REQUEST_BUCKETS.clear()
     os.environ.pop("DEMO_OPERATOR_PRIVATE_KEYS", None)
+    os.environ.pop("DEMO_OPERATOR_PRIVATE_KEY1", None)
+    os.environ.pop("DEMO_OPERATOR_PRIVATE_KEY2", None)
+    os.environ.pop("DEMO_OPERATOR_PRIVATE_KEY3", None)
     os.environ.pop("MOCK_CHAIN", None)

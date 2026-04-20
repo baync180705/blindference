@@ -31,6 +31,8 @@ class InferenceRequestCreate(BaseModel):
     encrypted_features: list[EncryptedFeature] = Field(default_factory=list)
     encrypted_input: list[EncryptedFeature] | EncryptedFeature | None = None
     permits: list[PermitEntry] = Field(default_factory=list)
+    leader_address: str | None = None
+    verifier_addresses: list[str] = Field(default_factory=list)
     feature_types: list[str]
     loan_id: str | None = None
     coverage_type: str | None = None
@@ -111,3 +113,8 @@ class DisputeSubmissionRequest(BaseModel):
 
 class BootstrapDemoNodesRequest(BaseModel):
     count: int = Field(default=3, ge=1, le=3)
+
+
+class NodeRuntimeRegistrationRequest(BaseModel):
+    operator_address: str
+    callback_url: str

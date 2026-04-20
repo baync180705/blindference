@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 from eth_account import Account
@@ -16,8 +17,8 @@ class CofheBridgeClient:
         self.script_path = script_path
         self.rpc_url = rpc_url
         self.chain_id = chain_id
-        self.private_key = private_key
-        self.operator_address = Account.from_key(private_key).address
+        self.private_key = self._normalize_private_key(private_key)
+        self.operator_address = Account.from_key(self.private_key).address
 
     async def decrypt_for_view(self, *, encrypted_features: list[dict], permit: str) -> list[int]:
         payload = {
@@ -55,3 +56,14 @@ class CofheBridgeClient:
         if process.returncode != 0 or not response.get("ok"):
             raise CofheBridgeError(response.get("error") or stderr.decode("utf-8").strip() or "CoFHE bridge failed")
         return response
+
+    @staticmethod
+    def _normalize_private_key(private_key: str) -> str:
+        normalized = private_key.strip().strip("\"'")
+        if normalized.startswith(("0x", "0X")):
+            normalized = normalized[2:]
+        if len(normalized) != 64:
+            raise CofheBridgeError(f"Invalid operator private key length: expected 64 hex chars, got {len(normalized)}")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", normalized):
+            raise CofheBridgeError("Invalid operator private key: expected only hexadecimal characters")
+        return f"0x{normalized.lower()}"

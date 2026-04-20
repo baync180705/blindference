@@ -80,6 +80,8 @@ async def create_request_with_quorum_permits(client, *, request_tag: str) -> dic
             "model_id": "groq:llama-3.3-70b-versatile",
             "encrypted_input": encrypted_features,
             "permits": permits,
+            "leader_address": preview["leader"],
+            "verifier_addresses": preview["verifiers"],
             "feature_types": feature_types,
             "loan_id": f"loan-{request_tag}",
             "coverage_type": "HALLUCINATION",
@@ -425,7 +427,10 @@ async def test_dispute_submission_for_accepted_request(client) -> None:
 
     request_response = await http_client.get(f"/v1/inference/{created['request_id']}")
     assert request_response.status_code == 200
-    assert request_response.json()["status"] == "disputed"
+    request_payload = request_response.json()
+    assert request_payload["status"] == "disputed"
+    assert request_payload["metadata"]["dispute_submission_tx"].startswith("0x")
+    assert request_payload["metadata"]["dispute_resolution_tx"].startswith("0x")
 
 
 @pytest.mark.asyncio

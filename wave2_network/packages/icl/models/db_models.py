@@ -135,3 +135,10 @@ class OperatorRecord(BaseModel):
     tasks_accepted: int = 0
     tasks_rejected: int = 0
     active: bool = True
+
+
+class NodeRuntimeRecord(BaseModel):
+    operator_address: str
+    callback_url: str
+    registered_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)

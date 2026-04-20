@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 from pathlib import Path
+
+import httpx
+import uvicorn
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
     parser = build_parser()
     args = parser.parse_args()
 
@@ -45,17 +53,59 @@ def main() -> None:
 
     if args.command == "start":
         from blindference_node.config import NodeSettings
+        from blindference_node.server import create_node_app
         from blindference_node.worker import BlindferenceDemoWorker
 
         settings = NodeSettings()
+        if not settings.operator_private_key:
+            raise RuntimeError("BLINDFERENCE_NODE_OPERATOR_PRIVATE_KEY must be set for event-driven runtime mode.")
+
+        worker = BlindferenceDemoWorker(settings)
+        callback_url = settings.callback_public_url or f"http://{settings.callback_host}:{settings.callback_port}"
+        operator_address = worker.cofhe_bridge.operator_address if worker.cofhe_bridge else "unknown"
+
         print(f"Connecting to ICL at {settings.icl_base_url}")
         print(
             f"Using provider={settings.provider} model="
             f"{settings.groq_model if settings.provider.lower() == 'groq' else settings.gemini_model}"
         )
+        print(f"Operator address={operator_address}")
+        print(f"Callback URL={callback_url}")
         if settings.mock_cloud_inference:
             print("Mock cloud inference is enabled for local Anvil demos.")
-        asyncio.run(BlindferenceDemoWorker(settings).run())
+
+        async def run_event_driven_runtime() -> None:
+            app = create_node_app(worker)
+            config = uvicorn.Config(
+                app,
+                host=settings.callback_host,
+                port=settings.callback_port,
+                log_level="warning",
+            )
+            server = uvicorn.Server(config)
+
+            async def register_runtime() -> None:
+                await asyncio.sleep(0.5)
+                async with httpx.AsyncClient(base_url=settings.icl_base_url, timeout=10.0) as client:
+                    response = await client.post(
+                        "/internal/operators/runtime",
+                        json={
+                            "operator_address": operator_address,
+                            "callback_url": callback_url,
+                        },
+                    )
+                    response.raise_for_status()
+                    print(f"Registered node runtime: {response.json()}")
+
+            server_task = asyncio.create_task(server.serve())
+            worker_task = asyncio.create_task(worker.run())
+            register_task = asyncio.create_task(register_runtime())
+            try:
+                await asyncio.gather(server_task, worker_task, register_task)
+            finally:
+                server.should_exit = True
+
+        asyncio.run(run_event_driven_runtime())
         return
 
     print(

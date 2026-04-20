@@ -33,18 +33,39 @@ The active push-ready codebase is `wave2_network/`.
 
 ### Blindference Demo Contracts
 
+- `BlindferenceInputVault`
+  - `0x8dD7B2A9B69C76A69d33B2DF46426Cbe657a902b`
+  - https://sepolia.arbiscan.io/address/0x8dD7B2A9B69C76A69d33B2DF46426Cbe657a902b
 - `MockPriceOracle`
-  - `0x5B01c9CcCe3E00DE92d3d76b312f2b9b2Db41e94`
-  - https://sepolia.arbiscan.io/address/0x5B01c9CcCe3E00DE92d3d76b312f2b9b2Db41e94
+  - `0xDe9AE4b048bF320Db6492e2AfD0516392EBA05Fc`
+  - https://sepolia.arbiscan.io/address/0xDe9AE4b048bF320Db6492e2AfD0516392EBA05Fc
 - `BlindferenceAttestor`
-  - `0x957CEb3F3E77bF91A001ef9FB2cEeB40A860FD79`
-  - https://sepolia.arbiscan.io/address/0x957CEb3F3E77bF91A001ef9FB2cEeB40A860FD79
+  - `0x74454F689F28EfbEF6Ef9F3F14e56ac62CA8EC49`
+  - https://sepolia.arbiscan.io/address/0x74454F689F28EfbEF6Ef9F3F14e56ac62CA8EC49
 - `BlindferenceUnderwriter`
-  - `0xC7D3706Ca2a42d739429Aec1b452051dA5Eb68f0`
-  - https://sepolia.arbiscan.io/address/0xC7D3706Ca2a42d739429Aec1b452051dA5Eb68f0
+  - `0xcbbdcb1b42DE4Ed52f7ceD752c65652EE317B601`
+  - https://sepolia.arbiscan.io/address/0xcbbdcb1b42DE4Ed52f7ceD752c65652EE317B601
 - `BlindferenceAgent`
-  - `0x43132afC4F163C244f7b66Adafee32F6B904994c`
-  - https://sepolia.arbiscan.io/address/0x43132afC4F163C244f7b66Adafee32F6B904994c
+  - `0xc9208B8aCAaD3abFc955a575719BB8F21640A6fE`
+  - https://sepolia.arbiscan.io/address/0xc9208B8aCAaD3abFc955a575719BB8F21640A6fE
+
+### Vault-Enabled Deploy Transactions
+
+- `BlindferenceInputVault`
+  - `0xc1f60f29c20f78253d45643dd5d8cd96c78615a90eadb441271396c7eb6d0408`
+  - https://sepolia.arbiscan.io/tx/0xc1f60f29c20f78253d45643dd5d8cd96c78615a90eadb441271396c7eb6d0408
+- `MockPriceOracle`
+  - `0xb251275dd5445cb864addd50d0ef010af52fe04632321151c0bf89f29198779c`
+  - https://sepolia.arbiscan.io/tx/0xb251275dd5445cb864addd50d0ef010af52fe04632321151c0bf89f29198779c
+- `BlindferenceAttestor`
+  - `0xe354448f72bd7953df34ecc7cec8177f2c4fb16a92a0922c99a7325482f1e028`
+  - https://sepolia.arbiscan.io/tx/0xe354448f72bd7953df34ecc7cec8177f2c4fb16a92a0922c99a7325482f1e028
+- `BlindferenceUnderwriter`
+  - `0x351b825a8fff8a41072c1d379abb9b0bc054dc2c864dd7d61932036caed1b561`
+  - https://sepolia.arbiscan.io/tx/0x351b825a8fff8a41072c1d379abb9b0bc054dc2c864dd7d61932036caed1b561
+- `BlindferenceAgent`
+  - `0x855084006dadf51b109e07cafe1203bf50287af2392f502a66ffa7324f90cc70`
+  - https://sepolia.arbiscan.io/tx/0x855084006dadf51b109e07cafe1203bf50287af2392f502a66ffa7324f90cc70
 
 ## Smoke Tests
 
@@ -76,6 +97,7 @@ The active push-ready codebase is `wave2_network/`.
 ## Demo Notes
 
 - The BF frontend has been fully moved into `wave2_network/packages/frontend`.
+- The live CoFHE path now uses `BlindferenceInputVault` before permit creation so browser-produced ciphertext handles get issuer ACL on-chain.
 - The frontend is now wired to the real ICL request lifecycle and live quorum progress.
 - The demo UI includes a mock escrow release evidence step after accepted scoring so the settlement journey is recordable without a production escrow releaser.
 - The correct CoFHE testnet endpoint used by the current stack is `https://testnet-cofhe.fhenix.zone`.

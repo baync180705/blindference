@@ -80,8 +80,6 @@ class Settings(BaseSettings):
             for private_key in numbered_keys
             if private_key and private_key.strip()
         ]
-        if explicit_numbered_keys and self.DEMO_OPERATOR_PRIVATE_KEYS == DEFAULT_DEMO_OPERATOR_KEYS:
-            return explicit_numbered_keys
         if combined_keys:
             return combined_keys
         return explicit_numbered_keys

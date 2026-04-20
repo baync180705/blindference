@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,6 +10,9 @@ import httpx
 from web3 import Web3
 
 from blindference_node.config import NodeSettings
+
+
+logger = logging.getLogger("blindference.node.executor")
 
 
 def build_risk_prompt(features: list[int]) -> str:
@@ -66,20 +70,30 @@ class CloudInferenceExecutor:
         model: str | None = None,
     ) -> BlindferenceRiskAssessment:
         selected_provider = (provider or self.settings.provider).lower()
+        selected_model = model or (
+            self.settings.gemini_model if selected_provider == "gemini" else self.settings.groq_model
+        )
+        logger.info(
+            "Inference requested provider=%s model=%s features=%s mock=%s",
+            selected_provider,
+            selected_model,
+            features,
+            self.settings.mock_cloud_inference,
+        )
         prompt = build_risk_prompt(features)
         if self.settings.mock_cloud_inference:
-            return self._mock_risk_assessment(features=features, provider=selected_provider, model=model)
+            return self._mock_risk_assessment(features=features, provider=selected_provider, model=selected_model)
 
         if selected_provider == "groq":
-            return await self._groq_risk_assessment(prompt=prompt, features=features, model=model or self.settings.groq_model)
+            return await self._groq_risk_assessment(prompt=prompt, features=features, model=selected_model)
         if selected_provider == "gemini":
             return await self._gemini_risk_assessment(
                 prompt=prompt,
                 features=features,
-                model=model or self.settings.gemini_model,
+                model=selected_model,
             )
 
-        return self._mock_risk_assessment(features=features, provider=selected_provider, model=model)
+        return self._mock_risk_assessment(features=features, provider=selected_provider, model=selected_model)
 
     async def _groq_risk_assessment(
         self,
@@ -91,6 +105,7 @@ class CloudInferenceExecutor:
         if not self.settings.groq_api_key:
             return self._mock_risk_assessment(features=features, provider="groq", model=model)
 
+        logger.info("Calling Groq model=%s", model)
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
@@ -118,6 +133,7 @@ class CloudInferenceExecutor:
         if not self.settings.gemini_api_key:
             return self._mock_risk_assessment(features=features, provider="gemini", model=model)
 
+        logger.info("Calling Gemini model=%s", model)
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
@@ -144,6 +160,13 @@ class CloudInferenceExecutor:
         risk_score = max(0, min(risk_score, 100))
         confidence = max(self.settings.confidence_floor, 80)
         timestamp = int(datetime.now(timezone.utc).timestamp())
+        logger.info(
+            "Parsed model response provider=%s model=%s risk_score=%s confidence=%s",
+            provider,
+            model,
+            risk_score,
+            confidence,
+        )
         return BlindferenceRiskAssessment(
             risk_score=risk_score,
             confidence=confidence,

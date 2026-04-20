@@ -20,6 +20,7 @@ import {PricingConfig} from "@blindference/contracts/common/Types.sol";
 import {BlindferenceAttestor} from "../contracts/core/BlindferenceAttestor.sol";
 import {BlindferenceUnderwriter} from "../contracts/core/BlindferenceUnderwriter.sol";
 import {BlindferenceAgent} from "../contracts/core/BlindferenceAgent.sol";
+import {BlindferenceInputVault} from "../contracts/core/BlindferenceInputVault.sol";
 import {MockPriceOracle} from "../contracts/mocks/MockPriceOracle.sol";
 
 contract DeployBlindferenceAgentScript is Script {
@@ -38,6 +39,7 @@ contract DeployBlindferenceAgentScript is Script {
         BlindferenceAttestor attestor;
         BlindferenceUnderwriter underwriter;
         BlindferenceAgent agent;
+        BlindferenceInputVault inputVault;
         MockPriceOracle priceOracle;
     }
 
@@ -88,6 +90,7 @@ contract DeployBlindferenceAgentScript is Script {
         d.identity = _identityRegistry();
         d.escrow = _escrowReleaser();
         d.priceOracle = new MockPriceOracle();
+        d.inputVault = _inputVault();
         d.priceOracle.setLatest(ETH_ASSET, 3_000e8);
         d.priceOracle.setLatest(BTC_ASSET, 60_000e8);
         d.priceOracle.setDefaultOutcome("loan_demo_safe", false);
@@ -210,11 +213,21 @@ contract DeployBlindferenceAgentScript is Script {
         console2.log("BlindferenceAgent:", address(d.agent));
         console2.log("BlindferenceAttestor:", address(d.attestor));
         console2.log("BlindferenceUnderwriter:", address(d.underwriter));
+        console2.log("BlindferenceInputVault:", address(d.inputVault));
         console2.log("MockPriceOracle:", address(d.priceOracle));
         console2.log("ETH/USDC initial price:", uint256(3_000e8));
         console2.log("BTC/USDC initial price:", uint256(60_000e8));
         console2.log("loan_demo_safe default outcome:", uint256(0));
         console2.log("loan_demo_risky default outcome:", uint256(1));
+    }
+
+    function _inputVault() internal returns (BlindferenceInputVault vault) {
+        address configured = _envAddressOrZero("BLINDFERENCE_INPUT_VAULT_ADDRESS");
+        if (configured != address(0)) {
+            return BlindferenceInputVault(configured);
+        }
+
+        vault = new BlindferenceInputVault();
     }
 
     function _agentConfigRegistry(

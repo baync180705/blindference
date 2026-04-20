@@ -12,6 +12,8 @@ export type InferenceRequestPayload = {
     node: string
     permit: Record<string, unknown> | string
   }>
+  leader_address: string
+  verifier_addresses: string[]
   feature_types: string[]
   loan_id: string
   coverage_type: string | null

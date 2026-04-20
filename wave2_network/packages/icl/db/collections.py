@@ -6,6 +6,7 @@ MODEL_CATALOG = "model_catalog"
 DISPUTES = "disputes"
 OPERATORS = "operators"
 PERMITS = "permits"
+NODE_RUNTIMES = "node_runtimes"
 
 
 def get_collection_names() -> list[str]:
@@ -18,4 +19,5 @@ def get_collection_names() -> list[str]:
         DISPUTES,
         OPERATORS,
         PERMITS,
+        NODE_RUNTIMES,
     ]
