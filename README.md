@@ -605,6 +605,19 @@ The monorepo package-level runbook is tracked in:
 - The live CoFHE flow now stores encrypted inputs in `BlindferenceInputVault` before sharing permits are created.
 - The settlement surface includes mock escrow release evidence for a complete demo narrative.
 
+## Live Deployment vs. Demo Video
+
+The **frontend is deployed publicly** and can be visited in a browser.
+
+The **full inference flow requires the backend stack to be running**, which cannot be hosted on a serverless platform. The reason is architectural:
+
+- The **ICL** is a long-running FastAPI process that holds quorum state between request intake and result aggregation. Serverless functions restart between requests and cannot maintain that state.
+- Each of the **3 node runtimes** runs a persistent HTTP callback server. The ICL pushes tasks directly to each node's callback URL. A serverless function has no stable URL between invocations and cannot wait for an asynchronous task push.
+
+Because of this, the live end-to-end flow — browser encryption → vault transaction → quorum dispatch → node decryption → Groq or Gemini inference → on-chain commitment — requires all four processes (ICL + 3 nodes) to be running on a persistent host simultaneously.
+
+A **demo video** is provided to show the complete lifecycle end-to-end. Engineers who want to run the stack themselves can follow the runbook in this README.
+
 ## Why Reineira and Fhenix Matter
 
 Blindference Wave 2 stands on two important collaboration pillars:
@@ -616,10 +629,11 @@ Together, they let Blindference demonstrate something stronger than a private in
 
 ## Limitations and Demo Assumptions
 
-- The demo uses hosted inference providers rather than locally hosted GPUs.
+- The demo uses hosted inference providers (Groq, Gemini) rather than locally hosted GPUs.
 - The settlement surface includes a mock escrow release evidence step for demo clarity.
 - Some identity, underwriting, and payout components are demo-grade rather than production-final.
 - Sepolia is the intended live demo environment; local FHE mocks are secondary tooling, not the main validation path.
+- The full backend stack (ICL + 3 node runtimes) requires a persistent host and cannot run on serverless platforms. The demo video covers the complete end-to-end flow for this reason.
 
 ## References
 
