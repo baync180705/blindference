@@ -110,6 +110,16 @@ Included config:
 - `wave2_network/packages/icl/vercel.json`
 - `wave2_network/packages/icl/requirements.txt`
 
+Vercel project settings for the ICL:
+
+- Root Directory: `wave2_network/packages/icl`
+- Framework Preset: `Other`
+- Install Command: leave empty
+- Build Command: leave empty
+- Output Directory: leave empty
+
+Do not use `npm --prefix wave2_network run deploy:icl:vercel` as the Vercel project build command. That command is only for running the Vercel CLI locally from the repo root.
+
 Required Vercel environment variables:
 
 - `MONGO_URI`

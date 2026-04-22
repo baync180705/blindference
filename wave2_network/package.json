@@ -7,7 +7,7 @@
   "scripts": {
     "build": "npm --prefix packages/frontend run build",
     "build:frontend": "npm --prefix packages/frontend run build",
-    "test:icl": "npm --prefix packages/icl run test",
+    "test:icl": "cd packages/icl && ./.venv/bin/python -m pytest -q",
     "check:node": "npm --prefix packages/node-reineira run check",
     "dev:icl": "bash scripts/demo/run-icl.sh",
     "dev:bootstrap": "bash scripts/demo/bootstrap.sh",
