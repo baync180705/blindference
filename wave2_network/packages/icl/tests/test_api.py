@@ -477,3 +477,52 @@ async def test_runtime_registration_refreshes_operator_heartbeat(client) -> None
     assert refreshed_node_response.status_code == 200
     refreshed_node = refreshed_node_response.json()
     assert refreshed_node["active"] is True
+
+
+@pytest.mark.asyncio
+async def test_dummy_inference_mode_accepts_without_bootstrap(dummy_client) -> None:
+    http_client, _app = dummy_client
+
+    preview_response = await http_client.get(
+        "/v1/inference/quorum-preview",
+        params={"model_id": "gemini:gemini-2.5-flash", "min_tier": 1, "verifier_count": 2},
+    )
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["leader"]
+    assert len(preview["verifiers"]) == 2
+
+    encrypted_features, feature_types = build_encrypted_features("dummy-hosted")
+    create_response = await http_client.post(
+        "/v1/inference/requests",
+        json={
+            "developer_address": DEVELOPER_ADDRESS,
+            "model_id": "gemini:gemini-2.5-flash",
+            "encrypted_input": encrypted_features,
+            "permits": [
+                {"node": preview["leader"], "permit": {"mock": True}},
+                *[
+                    {"node": verifier, "permit": {"mock": True}}
+                    for verifier in preview["verifiers"]
+                ],
+            ],
+            "leader_address": preview["leader"],
+            "verifier_addresses": preview["verifiers"],
+            "feature_types": feature_types,
+            "loan_id": "loan-dummy-hosted",
+            "coverage_type": "HALLUCINATION",
+            "max_fee_gnk": 100,
+            "min_tier": 1,
+            "zdr_required": False,
+            "verifier_count": 2,
+            "metadata": {"provider": "dummy"},
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "accepted"
+    assert created["leader_submission"]["provider"] == "dummy"
+    assert created["confirm_count"] == 2
+    assert created["reject_count"] == 0
+    assert created["metadata"]["dummy_inference_mode"] is True
+    assert created["metadata"]["result_commit_tx"].startswith("0x")

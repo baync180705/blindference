@@ -607,16 +607,25 @@ The monorepo package-level runbook is tracked in:
 
 ## Live Deployment vs. Demo Video
 
-The **frontend is deployed publicly** and can be visited in a browser.
+The **frontend** can be hosted publicly on Vercel.
 
-The **full inference flow requires the backend stack to be running**, which cannot be hosted on a serverless platform. The reason is architectural:
+The **ICL backend** can also be deployed on Vercel now, provided it uses persistent backing storage such as MongoDB. It no longer depends on in-process-only state for the request lifecycle.
 
-- The **ICL** is a long-running FastAPI process that holds quorum state between request intake and result aggregation. Serverless functions restart between requests and cannot maintain that state.
-- Each of the **3 node runtimes** runs a persistent HTTP callback server. The ICL pushes tasks directly to each node's callback URL. A serverless function has no stable URL between invocations and cannot wait for an asynchronous task push.
+The remaining deployment constraint is the **3 node runtimes**:
 
-Because of this, the live end-to-end flow — browser encryption → vault transaction → quorum dispatch → node decryption → Groq or Gemini inference → on-chain commitment — requires all four processes (ICL + 3 nodes) to be running on a persistent host simultaneously.
+- each node is a long-running worker with a callback server
+- the ICL pushes work to each node's callback URL
+- those runtimes need stable, publicly reachable callback endpoints
 
-A **demo video** is provided to show the complete lifecycle end-to-end. Engineers who want to run the stack themselves can follow the runbook in this README.
+So the current production-shaped deployment split is:
+
+- frontend on Vercel
+- ICL on Vercel
+- leader and verifier runtimes on a persistent host such as a VM, container platform, or tunneled local machine
+
+That means the full end-to-end flow — browser encryption → vault transaction → quorum dispatch → node decryption → Groq or Gemini inference → on-chain commitment — is deployable, but not as an all-serverless stack.
+
+A **demo video** is still useful for walkthroughs, but engineers can now deploy the browser app and ICL API on Vercel directly and only keep the node runtimes off-platform.
 
 ## Why Reineira and Fhenix Matter
 
@@ -633,7 +642,7 @@ Together, they let Blindference demonstrate something stronger than a private in
 - The settlement surface includes a mock escrow release evidence step for demo clarity.
 - Some identity, underwriting, and payout components are demo-grade rather than production-final.
 - Sepolia is the intended live demo environment; local FHE mocks are secondary tooling, not the main validation path.
-- The full backend stack (ICL + 3 node runtimes) requires a persistent host and cannot run on serverless platforms. The demo video covers the complete end-to-end flow for this reason.
+- The 3 node runtimes still require a persistent host with public callback URLs.
 
 ## References
 

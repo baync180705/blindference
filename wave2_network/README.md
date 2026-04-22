@@ -28,27 +28,27 @@ wave2_network/
 Open separate terminals and use these relative-path commands:
 
 ```bash
-bash wave2_network/scripts/demo/run-icl.sh
+npm --prefix wave2_network run dev:icl
 ```
 
 ```bash
-bash wave2_network/scripts/demo/bootstrap.sh
+npm --prefix wave2_network run dev:bootstrap
 ```
 
 ```bash
-bash wave2_network/scripts/demo/run-node.sh leader
+npm --prefix wave2_network run dev:node:leader
 ```
 
 ```bash
-bash wave2_network/scripts/demo/run-node.sh verifier1
+npm --prefix wave2_network run dev:node:verifier1
 ```
 
 ```bash
-bash wave2_network/scripts/demo/run-node.sh verifier2
+npm --prefix wave2_network run dev:node:verifier2
 ```
 
 ```bash
-bash wave2_network/scripts/demo/run-frontend.sh
+npm --prefix wave2_network run dev:frontend
 ```
 
 Open `http://127.0.0.1:3000`.
@@ -56,13 +56,137 @@ Open `http://127.0.0.1:3000`.
 To stop local demo processes:
 
 ```bash
-bash wave2_network/scripts/demo/stop.sh
+npm --prefix wave2_network run dev:stop
 ```
 
 To file a mocked dispute without using the modal:
 
 ```bash
 bash wave2_network/scripts/demo/file-dispute.sh <request_id> <developer_address> "manual review requested"
+```
+
+## Vercel Deployment
+
+Blindference Wave 2 should be deployed to Vercel as two separate monorepo projects:
+
+- `wave2_network/packages/frontend`
+- `wave2_network/packages/icl`
+
+This matches Vercel's current monorepo guidance for independently deployed subdirectories and its FastAPI runtime support for Python backends. Sources:
+
+- https://vercel.com/docs/monorepos
+- https://vercel.com/docs/frameworks/backend/fastapi
+
+### Frontend project
+
+Set the Vercel project root to `wave2_network/packages/frontend`.
+
+Included config:
+
+- `wave2_network/packages/frontend/vercel.json`
+- `wave2_network/packages/frontend/package.json`
+
+Required Vercel environment variables:
+
+- `VITE_ICL_API_URL=https://<your-icl-project>.vercel.app`
+- `VITE_CHAIN_ID=421614`
+- `VITE_WALLET_CONNECT_PROJECT_ID=<walletconnect-project-id>`
+- `VITE_BLINDFERENCE_AGENT_ADDRESS=0xc9208B8aCAaD3abFc955a575719BB8F21640A6fE`
+- `VITE_BLINDFERENCE_INPUT_VAULT_ADDRESS=0x8dD7B2A9B69C76A69d33B2DF46426Cbe657a902b`
+
+Deploy from the repo root:
+
+```bash
+npm --prefix wave2_network run deploy:frontend:vercel
+```
+
+### ICL backend project
+
+Set the Vercel project root to `wave2_network/packages/icl`.
+
+Included config:
+
+- `wave2_network/packages/icl/index.py`
+- `wave2_network/packages/icl/vercel.json`
+- `wave2_network/packages/icl/requirements.txt`
+
+Required Vercel environment variables:
+
+- `MONGO_URI`
+- `ARBITRUM_SEPOLIA_RPC`
+- `NODE_ATTESTATION_REGISTRY_ADDRESS`
+- `EXECUTION_COMMITMENT_REGISTRY_ADDRESS`
+- `AGENT_CONFIG_REGISTRY_ADDRESS`
+- `REPUTATION_REGISTRY_ADDRESS`
+- `REWARD_ACCUMULATOR_ADDRESS`
+- `ICL_PRIVATE_KEY`
+- `COFHE_RPC_URL`
+- `COFHE_CHAIN_ID=421614`
+- `DEFAULT_VERIFIER_COUNT=2`
+- `HEARTBEAT_GRACE_SECONDS=3600`
+- `BLINDFERENCE_ATTESTOR_ADDRESS=0x74454F689F28EfbEF6Ef9F3F14e56ac62CA8EC49`
+- `BLINDFERENCE_UNDERWRITER_ADDRESS=0xcbbdcb1b42DE4Ed52f7ceD752c65652EE317B601`
+- `BLINDFERENCE_AGENT_ADDRESS=0xc9208B8aCAaD3abFc955a575719BB8F21640A6fE`
+- `MOCK_ORACLE_ADDRESS=0xDe9AE4b048bF320Db6492e2AfD0516392EBA05Fc`
+- `DEMO_OPERATOR_PRIVATE_KEYS=<comma-separated-three-keys>`
+- `MOCK_CHAIN=false`
+- `DUMMY_INFERENCE_MODE=false`
+- `GROQ_API_KEY` and/or `GOOGLE_API_KEY`
+
+Deploy from the repo root:
+
+```bash
+npm --prefix wave2_network run deploy:icl:vercel
+```
+
+For a Vercel-only demo without live leader/verifier runtimes, set:
+
+- `DUMMY_INFERENCE_MODE=true`
+- optional: `DUMMY_INFERENCE_RISK_SCORE=67`
+
+In that mode, the ICL returns a deterministic accepted result immediately after request creation and synthesizes leader/verifier submissions plus mock settlement evidence. This is useful for hosted UI demos when the real 3-node quorum is not running.
+
+### Leader and verifier runtimes
+
+The three node runtimes are not a fit for Vercel Functions because they are long-running worker processes with callback servers. Keep them on a VM, container host, or local machine with public callback URLs.
+
+Important:
+
+- If the ICL is hosted on Vercel, each node callback URL must be publicly reachable.
+- `run-node.sh` now refreshes its runtime registration every 30 seconds so operator availability stays alive.
+- The ICL heartbeat grace window now defaults to 1 hour.
+
+Run them against a hosted ICL like this:
+
+Leader:
+
+```bash
+ICL_BASE_URL=https://<your-icl-project>.vercel.app \
+LEADER_CALLBACK_PUBLIC_URL=https://<leader-public-url> \
+npm --prefix wave2_network run dev:node:leader
+```
+
+Verifier 1:
+
+```bash
+ICL_BASE_URL=https://<your-icl-project>.vercel.app \
+VERIFIER1_CALLBACK_PUBLIC_URL=https://<verifier1-public-url> \
+npm --prefix wave2_network run dev:node:verifier1
+```
+
+Verifier 2:
+
+```bash
+ICL_BASE_URL=https://<your-icl-project>.vercel.app \
+VERIFIER2_CALLBACK_PUBLIC_URL=https://<verifier2-public-url> \
+npm --prefix wave2_network run dev:node:verifier2
+```
+
+Re-bootstrap the funded operators against the hosted ICL after deploy:
+
+```bash
+ICL_BASE_URL=https://<your-icl-project>.vercel.app \
+npm --prefix wave2_network run dev:bootstrap
 ```
 
 ## Install

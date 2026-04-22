@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     COFHE_RPC_URL: str = "http://127.0.0.1:8545"
     COFHE_CHAIN_ID: int = 421614
     MOCK_CHAIN: bool = False
+    DUMMY_INFERENCE_MODE: bool = False
+    DUMMY_INFERENCE_RISK_SCORE: int = 67
     DEFAULT_MIN_TIER: int = 1
     DEFAULT_VERIFIER_COUNT: int = 2
     HEARTBEAT_GRACE_SECONDS: int = 3600

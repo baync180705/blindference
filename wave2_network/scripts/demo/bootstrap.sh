@@ -2,7 +2,13 @@
 
 set -euo pipefail
 
-curl -s -X POST http://127.0.0.1:8000/admin/bootstrap-demo-nodes \
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./common.sh
+source "${SCRIPT_DIR}/common.sh"
+
+load_icl_env
+
+curl -s -X POST "${ICL_BASE_URL}/admin/bootstrap-demo-nodes" \
   -H 'Content-Type: application/json' \
   -d '{"count":3}'
 echo

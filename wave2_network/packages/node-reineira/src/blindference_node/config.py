@@ -32,3 +32,4 @@ class NodeSettings(BaseSettings):
     callback_host: str = "127.0.0.1"
     callback_port: int = Field(default=9101, ge=1, le=65535)
     callback_public_url: str | None = None
+    runtime_registration_interval_seconds: int = Field(default=30, ge=5, le=3600)

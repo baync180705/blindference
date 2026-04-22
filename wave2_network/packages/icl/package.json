@@ -1,0 +1,12 @@
+{
+  "name": "blindference-icl",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "./.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000",
+    "test": "./.venv/bin/python -m pytest -q",
+    "vercel-build": "node -e \"console.log('Blindference ICL uses Vercel Python runtime; no Node build step required.')\""
+  }
+}

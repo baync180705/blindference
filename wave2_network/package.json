@@ -1,0 +1,22 @@
+{
+  "name": "blindference-wave2",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm --prefix packages/frontend run build",
+    "build:frontend": "npm --prefix packages/frontend run build",
+    "test:icl": "npm --prefix packages/icl run test",
+    "check:node": "npm --prefix packages/node-reineira run check",
+    "dev:icl": "bash scripts/demo/run-icl.sh",
+    "dev:bootstrap": "bash scripts/demo/bootstrap.sh",
+    "dev:frontend": "bash scripts/demo/run-frontend.sh",
+    "dev:node:leader": "bash scripts/demo/run-node.sh leader",
+    "dev:node:verifier1": "bash scripts/demo/run-node.sh verifier1",
+    "dev:node:verifier2": "bash scripts/demo/run-node.sh verifier2",
+    "dev:stop": "bash scripts/demo/stop.sh",
+    "deploy:frontend:vercel": "vercel --cwd packages/frontend",
+    "deploy:icl:vercel": "vercel --cwd packages/icl"
+  }
+}

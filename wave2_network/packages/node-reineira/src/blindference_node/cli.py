@@ -87,15 +87,24 @@ def main() -> None:
             async def register_runtime() -> None:
                 await asyncio.sleep(0.5)
                 async with httpx.AsyncClient(base_url=settings.icl_base_url, timeout=10.0) as client:
-                    response = await client.post(
-                        "/internal/operators/runtime",
-                        json={
-                            "operator_address": operator_address,
-                            "callback_url": callback_url,
-                        },
-                    )
-                    response.raise_for_status()
-                    print(f"Registered node runtime: {response.json()}")
+                    while not server.should_exit:
+                        try:
+                            response = await client.post(
+                                "/internal/operators/runtime",
+                                json={
+                                    "operator_address": operator_address,
+                                    "callback_url": callback_url,
+                                },
+                            )
+                            response.raise_for_status()
+                            print(f"Registered node runtime: {response.json()}")
+                        except Exception as error:
+                            logging.getLogger("blindference.node").warning(
+                                "Runtime registration heartbeat failed for operator=%s: %s",
+                                operator_address,
+                                error,
+                            )
+                        await asyncio.sleep(settings.runtime_registration_interval_seconds)
 
             server_task = asyncio.create_task(server.serve())
             worker_task = asyncio.create_task(worker.run())

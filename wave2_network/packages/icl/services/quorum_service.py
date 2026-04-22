@@ -70,6 +70,8 @@ class QuorumService:
         zdr_required: bool,
         verifier_count: int,
     ) -> dict[str, list[str] | str]:
+        if self.chain_service.settings.DUMMY_INFERENCE_MODE:
+            return self._dummy_quorum(verifier_count)
         return await self.node_selector.select_quorum(
             min_tier=min_tier,
             zdr_required=zdr_required,
@@ -158,6 +160,33 @@ class QuorumService:
                 },
                 upsert=True,
             )
+        if self.chain_service.settings.DUMMY_INFERENCE_MODE:
+            metadata["dummy_inference_mode"] = True
+            metadata["dummy_inference_reason"] = "serverless-demo-fallback"
+            metadata["task_registered_tx"] = self.chain_service.web3_client.ensure_hex_prefix(
+                self.chain_service.web3_client.keccak_text(f"dummy-register:{request_record.task_id}")
+            )
+            metadata["escrow_creation_tx"] = self.chain_service.web3_client.ensure_hex_prefix(
+                self.chain_service.web3_client.keccak_text(f"dummy-escrow:{request_record.task_id}")
+            )
+            if normalized_permits:
+                metadata["permits"] = [self._permit_record_to_metadata(entry) for entry in normalized_permits]
+            if payload.coverage_type:
+                metadata["coverage_id"] = metadata.get("coverage_id") or f"cov_{request_record.request_id[:10]}"
+                metadata["coverage_purchase_tx"] = self.chain_service.web3_client.ensure_hex_prefix(
+                    self.chain_service.web3_client.keccak_text(f"dummy-coverage:{request_record.task_id}")
+                )
+            await self.database[INFERENCE_REQUESTS].update_one(
+                {"request_id": request_record.request_id},
+                {"$set": {"metadata": metadata, "updated_at": datetime.now(timezone.utc)}},
+            )
+            request_record.metadata = metadata
+            await self._complete_dummy_request(
+                request_record=request_record,
+                assignment_record=assignment_record,
+            )
+            return await self.get_request(request_record.request_id)
+
         chain_registration = await self.chain_service.register_task(
             task_id=request_record.task_id,
             developer_address=request_record.developer_address,
@@ -939,3 +968,136 @@ class QuorumService:
             "verifier_addresses": verifier_addresses,
             "candidate_addresses": candidate_addresses,
         }
+
+    def _dummy_quorum(self, verifier_count: int) -> dict[str, list[str] | str]:
+        available_addresses = [
+            self.chain_service.web3_client.checksum_address(
+                self.chain_service.web3_client.account_from_private_key(private_key).address
+            )
+            for private_key in self.chain_service.settings.demo_operator_private_keys
+        ]
+        required_nodes = verifier_count + 1
+        if len(available_addresses) < required_nodes:
+            raise ValueError(
+                f"DUMMY_INFERENCE_MODE requires at least {required_nodes} configured demo operator keys"
+            )
+        return {
+            "leader_address": available_addresses[0],
+            "verifier_addresses": available_addresses[1:required_nodes],
+            "candidate_addresses": available_addresses[:required_nodes],
+        }
+
+    async def _complete_dummy_request(
+        self,
+        *,
+        request_record: InferenceRequestRecord,
+        assignment_record: QuorumAssignmentRecord,
+    ) -> None:
+        risk_score = self._dummy_risk_score(request_record)
+        aggregated_confidence = 88
+        result_hash = self.chain_service.web3_client.keccak_uint256(risk_score)
+        provider = "dummy"
+        model = request_record.model_id
+        leader_summary = (
+            "Dummy inference mode is enabled on the ICL. "
+            "This accepted result is synthesized so the hosted frontend can demo the full flow without live nodes."
+        )
+        now = datetime.now(timezone.utc)
+        leader_submission = {
+            "leader_address": assignment_record.leader_address,
+            "risk_score": risk_score,
+            "leader_confidence": aggregated_confidence,
+            "leader_summary": leader_summary,
+            "provider": provider,
+            "model": model,
+            "result_hash": result_hash,
+            "submitted_at": now.isoformat(),
+        }
+
+        for index, verifier_address in enumerate(assignment_record.verifier_addresses):
+            verifier_record = VerifierVerdictRecord(
+                request_id=request_record.request_id,
+                task_id=request_record.task_id,
+                verifier_address=verifier_address,
+                accepted=True,
+                confidence=max(80, aggregated_confidence - index - 2),
+                reason="dummy inference mode accepted the leader result",
+                result_hash=result_hash,
+                risk_score=risk_score,
+                provider=provider,
+                model=model,
+                summary="Verifier matched synthesized leader output.",
+                updated_at=now,
+            )
+            await self.database[VERIFIER_VERDICTS].update_one(
+                {
+                    "request_id": verifier_record.request_id,
+                    "verifier_address": verifier_record.verifier_address,
+                },
+                {"$set": verifier_record.model_dump()},
+                upsert=True,
+            )
+
+        chain_tx_hash = self.chain_service.web3_client.ensure_hex_prefix(
+            self.chain_service.web3_client.keccak_text(f"dummy-commit:{request_record.task_id}:{result_hash}")
+        )
+        certificate = QuorumCertificateRecord(
+            request_id=request_record.request_id,
+            task_id=request_record.task_id,
+            model_id=request_record.model_id,
+            leader_address=assignment_record.leader_address,
+            verifier_addresses=assignment_record.verifier_addresses,
+            result_hash=result_hash,
+            confirm_count=len(assignment_record.verifier_addresses),
+            reject_count=0,
+            aggregated_confidence=aggregated_confidence,
+            accepted=True,
+            chain_tx_hash=chain_tx_hash,
+        )
+        await self.database[QUORUM_CERTIFICATES].update_one(
+            {"request_id": certificate.request_id},
+            {"$set": certificate.model_dump()},
+            upsert=True,
+        )
+
+        metadata = dict(request_record.metadata)
+        metadata["leader_submission"] = leader_submission
+        metadata["result_commit_tx"] = chain_tx_hash
+        metadata["escrow_release_tx"] = chain_tx_hash
+        metadata["escrow_release_mode"] = "dummy-hosted-demo"
+
+        leader_output = json.dumps(
+            {
+                "task_id": request_record.task_id,
+                "loan_id": request_record.loan_id,
+                "risk_score": risk_score,
+                "confidence": aggregated_confidence,
+                "provider": provider,
+                "model": model,
+                "summary": leader_summary,
+                "response_hash": result_hash,
+            },
+            sort_keys=True,
+        )
+        await self.database[INFERENCE_REQUESTS].update_one(
+            {"request_id": request_record.request_id},
+            {
+                "$set": {
+                    "status": "accepted",
+                    "updated_at": now,
+                    "metadata": metadata,
+                    "result_hash": result_hash,
+                    "result_preview": leader_output,
+                    "risk_score": risk_score,
+                    "chain_tx_hash": chain_tx_hash,
+                    "aggregated_confidence": aggregated_confidence,
+                    "confirm_count": len(assignment_record.verifier_addresses),
+                    "reject_count": 0,
+                }
+            },
+        )
+
+    def _dummy_risk_score(self, request_record: InferenceRequestRecord) -> int:
+        base_score = int(self.chain_service.settings.DUMMY_INFERENCE_RISK_SCORE)
+        task_entropy = int(request_record.task_id[-2:], 16) % 7
+        return max(0, min(100, base_score + task_entropy - 3))
