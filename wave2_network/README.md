@@ -106,7 +106,7 @@ Set the Vercel project root to `wave2_network/packages/icl`.
 
 Included config:
 
-- `wave2_network/packages/icl/index.py`
+- `wave2_network/packages/icl/api/index.py`
 - `wave2_network/packages/icl/vercel.json`
 - `wave2_network/packages/icl/requirements.txt`
 
