@@ -209,6 +209,7 @@ class QuorumService:
             operator_address=checksum_address,
             callback_url=callback_url.rstrip("/"),
         )
+        await self.chain_service.refresh_operator_heartbeat(checksum_address)
         await self.database[NODE_RUNTIMES].update_one(
             {"operator_address": checksum_address},
             {

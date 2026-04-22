@@ -432,6 +432,18 @@ class ChainService:
         for verifier in verifiers:
             await self._increment_operator_metrics(verifier, True)
 
+    async def refresh_operator_heartbeat(self, operator_address: str) -> None:
+        checksum_address = self.web3_client.checksum_address(operator_address)
+        await self.database[OPERATORS].update_one(
+            {"operator_address": checksum_address},
+            {
+                "$set": {
+                    "last_heartbeat": datetime.now(timezone.utc),
+                    "active": True,
+                }
+            },
+        )
+
     async def _increment_operator_metrics(self, operator_address: str, accepted: bool) -> None:
         operator = await self.database[OPERATORS].find_one(
             {"operator_address": self.web3_client.checksum_address(operator_address)}

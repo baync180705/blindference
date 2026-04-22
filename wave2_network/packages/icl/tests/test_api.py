@@ -456,3 +456,24 @@ async def test_inference_task_lookup_and_permit_attachment(client) -> None:
     assert refreshed.status_code == 200
     refreshed_payload = refreshed.json()
     assert refreshed_payload["metadata"]["permits"][0]["status"] == "shared-permit-provided"
+
+
+@pytest.mark.asyncio
+async def test_runtime_registration_refreshes_operator_heartbeat(client) -> None:
+    http_client, _app = client
+    nodes = await bootstrap_nodes(client)
+    target_node = nodes[0]
+
+    runtime_registration = await http_client.post(
+        "/internal/operators/runtime",
+        json={
+            "operator_address": target_node["operator_address"],
+            "callback_url": "https://leader.example.com",
+        },
+    )
+    assert runtime_registration.status_code == 200
+
+    refreshed_node_response = await http_client.get(f"/v1/nodes/{target_node['operator_address']}")
+    assert refreshed_node_response.status_code == 200
+    refreshed_node = refreshed_node_response.json()
+    assert refreshed_node["active"] is True
