@@ -17,6 +17,8 @@ class InferenceRequestRecord(BaseModel):
     invocation_id: int
     developer_address: str
     model_id: str
+    mode: Literal["risk", "text"] = "risk"
+    text_mode: bool = False
     encrypted_features: list[dict[str, str | int]]
     feature_types: list[str]
     loan_id: str | None = None
@@ -31,6 +33,13 @@ class InferenceRequestRecord(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    prompt_cid: str | None = None
+    encrypted_prompt_key_high: str | None = None
+    encrypted_prompt_key_low: str | None = None
+    encrypted_output_key_high: str | None = None
+    encrypted_output_key_low: str | None = None
+    output_cid: str | None = None
+    commitment_hash: str | None = None
     result_hash: str | None = None
     result_preview: str | None = None
     risk_score: int | None = None

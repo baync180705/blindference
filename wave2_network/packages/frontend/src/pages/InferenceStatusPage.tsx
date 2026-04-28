@@ -7,21 +7,31 @@ import { OnChainEvidence } from '../components/OnChainEvidence'
 import { QuorumVisualizer } from '../components/QuorumVisualizer'
 import { RiskGauge } from '../components/RiskGauge'
 import { StatusTimeline } from '../components/StatusTimeline'
+import { useCofheClient } from '../hooks/useCofheClient'
 import { useInferenceStatus } from '../hooks/useInferenceStatus'
+import { decryptOutputKey, downloadAndDecryptTextOutput } from '../utils/textPromptKey'
 
 export function InferenceStatusPage() {
   const { requestId = '' } = useParams<{ requestId: string }>()
   const [isDisputeOpen, setIsDisputeOpen] = useState(false)
   const [timeLeft, setTimeLeft] = useState('')
+  const [textAnswer, setTextAnswer] = useState<string | null>(null)
+  const [textAnswerError, setTextAnswerError] = useState<string | null>(null)
+  const [isDecryptingAnswer, setIsDecryptingAnswer] = useState(false)
   const status = useInferenceStatus(requestId)
+  const { client: cofheClient, isReady: cofheReady } = useCofheClient()
 
   useEffect(() => {
     const update = () => {
-      if (!status?.raw.updated_at) {
+      const updatedAt =
+        status?.raw && 'updated_at' in status.raw && typeof status.raw.updated_at === 'string'
+          ? status.raw.updated_at
+          : null
+      if (!updatedAt) {
         setTimeLeft('72h 0m')
         return
       }
-      const acceptedAt = Date.parse(status.raw.updated_at)
+      const acceptedAt = Date.parse(updatedAt)
       const deadline = acceptedAt + 72 * 60 * 60 * 1000
       const diff = Math.max(deadline - Date.now(), 0)
       const hours = Math.floor(diff / 3_600_000)
@@ -32,7 +42,69 @@ export function InferenceStatusPage() {
     update()
     const interval = window.setInterval(update, 60_000)
     return () => window.clearInterval(interval)
-  }, [status?.raw.updated_at])
+  }, [status?.raw])
+
+  useEffect(() => {
+    let cancelled = false
+    const outputCid = status?.text_result?.output_cid
+    const highHandle = status?.text_result?.encrypted_output_key_high
+    const lowHandle = status?.text_result?.encrypted_output_key_low
+
+    const decryptAnswer = async () => {
+      if (
+        !status ||
+        status.mode !== 'text' ||
+        status.status !== 'ACCEPTED' ||
+        !outputCid ||
+        !highHandle ||
+        !lowHandle ||
+        !cofheClient ||
+        !cofheReady
+      ) {
+        return
+      }
+
+      setIsDecryptingAnswer(true)
+      setTextAnswerError(null)
+      try {
+        const outputKey = await decryptOutputKey(
+          cofheClient,
+          highHandle,
+          lowHandle,
+        )
+        const answer = await downloadAndDecryptTextOutput(outputCid, outputKey)
+        if (!cancelled) {
+          setTextAnswer(answer)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setTextAnswerError(error instanceof Error ? error.message : 'Failed to decrypt text output')
+        }
+      } finally {
+        if (!cancelled) {
+          setIsDecryptingAnswer(false)
+        }
+      }
+    }
+
+    if (!status || status.mode !== 'text' || status.status !== 'ACCEPTED') {
+      setTextAnswer(null)
+      setTextAnswerError(null)
+    }
+    void decryptAnswer()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    cofheClient,
+    cofheReady,
+    status?.mode,
+    status?.status,
+    status?.text_result?.output_cid,
+    status?.text_result?.encrypted_output_key_high,
+    status?.text_result?.encrypted_output_key_low,
+  ])
 
   const getStatusDisplay = (value: string) => {
     switch (value) {
@@ -180,7 +252,30 @@ export function InferenceStatusPage() {
 
         <div>
           <section className="sticky top-24 flex flex-col items-center justify-center rounded-xl border border-white/5 bg-black/40 p-8">
-            {status.status === 'ACCEPTED' && status.result ? (
+            {status.mode === 'text' && status.status === 'ACCEPTED' ? (
+              <div className="flex w-full flex-col gap-4">
+                <div className="w-full rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-emerald-400">
+                  <div className="border-b border-emerald-500/10 pb-2 text-[10px] font-bold uppercase tracking-widest text-emerald-500/70">
+                    Decrypted Answer
+                  </div>
+                  {isDecryptingAnswer ? (
+                    <div className="py-8 text-sm text-gray-300">Decrypting answer...</div>
+                  ) : textAnswerError ? (
+                    <div className="py-8 text-sm text-red-400">{textAnswerError}</div>
+                  ) : textAnswer ? (
+                    <pre className="mt-3 whitespace-pre-wrap font-sans text-sm leading-6 text-white">{textAnswer}</pre>
+                  ) : (
+                    <div className="py-8 text-sm text-gray-400">Waiting for output key...</div>
+                  )}
+                </div>
+                <div className="w-full rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Commitment</div>
+                  <div className="mt-2 break-all font-mono text-xs text-gray-300">
+                    {status.text_result?.commitment_hash ?? 'Pending'}
+                  </div>
+                </div>
+              </div>
+            ) : status.status === 'ACCEPTED' && status.result ? (
               <div className="flex w-full flex-col items-center">
                 <RiskGauge score={status.result.risk_score} size={220} />
 
@@ -205,19 +300,19 @@ export function InferenceStatusPage() {
                   <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <span className="mb-1 block text-[10px] uppercase text-emerald-500/50">Accuracy</span>
-                      <span className="font-mono">{status.raw.model_id.includes('gemini') ? '96.8%' : '94.2%'}</span>
+                      <span className="font-mono">{'model_id' in status.raw && status.raw.model_id.includes('gemini') ? '96.8%' : '94.2%'}</span>
                     </div>
                     <div>
                       <span className="mb-1 block text-[10px] uppercase text-emerald-500/50">False Positives</span>
-                      <span className="font-mono">{status.raw.model_id.includes('gemini') ? '0.8%' : '1.2%'}</span>
+                      <span className="font-mono">{'model_id' in status.raw && status.raw.model_id.includes('gemini') ? '0.8%' : '1.2%'}</span>
                     </div>
                     <div>
                       <span className="mb-1 block text-[10px] uppercase text-emerald-500/50">Hallucinations</span>
-                      <span className="font-mono">{status.raw.model_id.includes('gemini') ? '< 0.2%' : '< 0.5%'}</span>
+                      <span className="font-mono">{'model_id' in status.raw && status.raw.model_id.includes('gemini') ? '< 0.2%' : '< 0.5%'}</span>
                     </div>
                     <div>
                       <span className="mb-1 block text-[10px] uppercase text-emerald-500/50">Benchmark</span>
-                      <span className="font-mono">{status.raw.model_id.includes('gemini') ? '86.2 MMLU' : '82.0 MMLU'}</span>
+                      <span className="font-mono">{'model_id' in status.raw && status.raw.model_id.includes('gemini') ? '86.2 MMLU' : '82.0 MMLU'}</span>
                     </div>
                   </div>
                 </div>

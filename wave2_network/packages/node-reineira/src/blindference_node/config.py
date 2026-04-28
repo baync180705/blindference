@@ -12,6 +12,18 @@ class NodeSettings(BaseSettings):
     provider: str = "groq"
     groq_model: str = "llama-3.3-70b-versatile"
     gemini_model: str = "gemini-2.5-flash"
+    llm_model: str = Field(
+        default="gpt-4o-mini",
+        validation_alias=AliasChoices("BLINDFERENCE_NODE_LLM_MODEL", "LLM_MODEL"),
+    )
+    llm_base_url: str = Field(
+        default="http://localhost:11434/v1",
+        validation_alias=AliasChoices("BLINDFERENCE_NODE_LLM_BASE_URL", "LLM_BASE_URL"),
+    )
+    openai_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("BLINDFERENCE_NODE_OPENAI_API_KEY", "OPENAI_API_KEY"),
+    )
     groq_api_key: str | None = None
     gemini_api_key: str | None = None
     confidence_floor: int = Field(default=78, ge=1, le=100)
@@ -27,8 +39,16 @@ class NodeSettings(BaseSettings):
         ),
     )
     cofhe_chain_id: int = 421614
+    prompt_key_store_address: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("BLINDFERENCE_NODE_PROMPT_KEY_STORE_ADDRESS", "PROMPT_KEY_STORE_ADDRESS"),
+    )
     operator_private_key: str | None = None
     cofhe_bridge_script: str = str(Path(__file__).resolve().parents[2] / "scripts" / "cofhe_bridge.mjs")
     callback_host: str = "127.0.0.1"
     callback_port: int = Field(default=9101, ge=1, le=65535)
     callback_public_url: str | None = None
+    text_stub_prompt_key_hex: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("BLINDFERENCE_NODE_TEXT_STUB_PROMPT_KEY_HEX", "TEXT_STUB_PROMPT_KEY_HEX"),
+    )

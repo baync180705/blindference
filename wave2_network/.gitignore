@@ -37,6 +37,21 @@ typechain-types/
 .env.deployed
 .env.*
 !.env.example
+.envrc
+.direnv/
+
+# Local secrets / certs
+secrets/
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.crt
+
+# Local runtime files
+*.pid
+*.pid.lock
+tmp/
 
 # OS / editor
 .DS_Store

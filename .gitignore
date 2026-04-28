@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+.envrc
+.direnv/
 
 .venv/
 venv/
@@ -27,6 +29,15 @@ types/
 *.backup/
 
 *.log
+*.pid
+*.pid.lock
+tmp/
+secrets/
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.crt
 .DS_Store
 .idea/
 .vscode/

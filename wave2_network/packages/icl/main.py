@@ -14,6 +14,7 @@ from routers.admin import router as admin_router
 from routers.coverage import router as coverage_router
 from routers.disputes import router as disputes_router
 from routers.inference import router as inference_router
+from routers.internal import router as internal_task_router
 from routers.models import router as models_router
 from routers.nodes import router as nodes_router
 from routers.operators import router as operators_router
@@ -114,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(disputes_router)
     app.include_router(admin_router)
     app.include_router(operators_router)
+    app.include_router(internal_task_router)
 
     @app.get("/")
     async def root() -> dict[str, str]:

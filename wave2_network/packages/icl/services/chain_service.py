@@ -14,6 +14,7 @@ from chain.execution_commitment_registry import (
     ExecutionCommitmentRegistryClient,
 )
 from chain.node_attestation_registry import NodeAttestationRegistryClient
+from chain.prompt_key_store import PromptKeyStoreClient
 from chain.reputation_registry import ReputationRegistryClient
 from chain.reward_accumulator import RewardAccumulatorClient
 from chain.web3_client import Web3Client
@@ -38,10 +39,12 @@ class ChainService:
         self.web3_client = Web3Client(settings)
         self.node_attestation_registry = NodeAttestationRegistryClient(self.web3_client, settings)
         self.execution_commitment_registry = ExecutionCommitmentRegistryClient(self.web3_client, settings)
+        self.prompt_key_store = PromptKeyStoreClient(self.web3_client, settings)
         self.agent_config_registry = AgentConfigRegistryClient(self.web3_client, settings)
         self.reputation_registry = ReputationRegistryClient(self.web3_client, settings)
         self.reward_accumulator = RewardAccumulatorClient(self.web3_client, settings)
         self._mock_invocations: dict[int, dict[str, Any]] = {}
+        self._mock_prompt_key_stores: dict[str, dict[str, Any]] = {}
 
     async def is_connected(self) -> bool:
         if self.settings.MOCK_CHAIN:
@@ -223,6 +226,41 @@ class ChainService:
                 }
             )
         return permits
+
+    async def store_text_prompt_key(
+        self,
+        *,
+        task_id: str,
+        encrypted_high_input: dict[str, Any],
+        encrypted_low_input: dict[str, Any],
+        allowed_nodes: list[str],
+    ) -> dict[str, Any]:
+        normalized_nodes = [self.web3_client.checksum_address(address) for address in allowed_nodes]
+        if self.settings.MOCK_CHAIN:
+            tx_hash = self.web3_client.ensure_hex_prefix(
+                self.web3_client.keccak_text(f"mock-prompt-key-store:{task_id}:{':'.join(normalized_nodes)}")
+            )
+            self._mock_prompt_key_stores[task_id] = {
+                "encrypted_high_input": encrypted_high_input,
+                "encrypted_low_input": encrypted_low_input,
+                "allowed_nodes": normalized_nodes,
+                "tx_hash": tx_hash,
+            }
+            return {"tx_hash": tx_hash, "status": "stored"}
+
+        if not self.prompt_key_store.enabled:
+            raise ValueError(
+                "PROMPT_KEY_STORE_ADDRESS is not configured; cannot store text prompt keys on-chain"
+            )
+
+        tx_result = await asyncio.to_thread(
+            self.prompt_key_store.store_key,
+            job_id=task_id,
+            encrypted_high_input=encrypted_high_input,
+            encrypted_low_input=encrypted_low_input,
+            allowed_nodes=normalized_nodes,
+        )
+        return {"tx_hash": tx_result["tx_hash"], "status": "stored"}
 
     async def finalize_execution(
         self,

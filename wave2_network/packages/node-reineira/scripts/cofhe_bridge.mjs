@@ -1,5 +1,5 @@
 import { createCofheClient, createCofheConfig } from '@cofhe/sdk/node'
-import { FheTypes } from '@cofhe/sdk'
+import { Encryptable, FheTypes } from '@cofhe/sdk'
 import { chains } from '@cofhe/sdk/chains'
 import { PermitUtils } from '@cofhe/sdk/permits'
 import { createPublicClient, createWalletClient, http } from 'viem'
@@ -126,6 +126,46 @@ async function decryptForView(payload) {
   return { values }
 }
 
+async function decryptPromptKey(payload) {
+  const { client, publicClient, walletClient, account } = await createClient(payload)
+  const permit = await client.permits.getOrCreateSelfPermit(undefined, account.address, {
+    issuer: account.address,
+    name: payload.permitName || 'Blindference Prompt Key Permit',
+  })
+
+  const high = await client
+    .decryptForView(BigInt(payload.highHandle), FheTypes.Uint256)
+    .withPermit(permit)
+    .execute()
+  const low = await client
+    .decryptForView(BigInt(payload.lowHandle), FheTypes.Uint256)
+    .withPermit(permit)
+    .execute()
+
+  return {
+    high: high.toString(),
+    low: low.toString(),
+    permitHash: permit.hash,
+  }
+}
+
+async function encryptUint256(payload) {
+  const { client } = await createClient(payload)
+  const values = Array.isArray(payload.values) ? payload.values : []
+  const encrypted = await client
+    .encryptInputs(values.map((value) => Encryptable.uint256(BigInt(value))))
+    .execute()
+
+  return {
+    results: encrypted.map((item) => ({
+      ctHash: item.ctHash.toString(),
+      securityZone: item.securityZone,
+      utype: Number(item.utype),
+      signature: item.signature,
+    })),
+  }
+}
+
 async function createSharingPermit(payload) {
   const { client, publicClient, walletClient, account } = await createClient(payload)
   const permit = await client.permits.createSharing(
@@ -153,6 +193,12 @@ async function main() {
         break
       case 'create_sharing_permit':
         result = await createSharingPermit(payload)
+        break
+      case 'decrypt_prompt_key':
+        result = await decryptPromptKey(payload)
+        break
+      case 'encrypt_uint256':
+        result = await encryptUint256(payload)
         break
       default:
         throw new Error(`Unsupported action: ${payload.action}`)

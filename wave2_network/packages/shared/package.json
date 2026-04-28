@@ -1,0 +1,20 @@
+{
+  "name": "@blindference/shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./commitment": "./src/commitment.ts",
+    "./encryption/aes": "./src/encryption/aes.ts",
+    "./ipfs": "./src/ipfs.ts",
+    "./types/textInference": "./src/types/textInference.ts"
+  },
+  "dependencies": {
+    "@lighthouse-web3/sdk": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "typescript": "~5.8.2"
+  }
+}

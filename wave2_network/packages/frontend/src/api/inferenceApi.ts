@@ -1,8 +1,11 @@
 import { apiClient } from './client'
+import type { TextInferenceRequest } from '../../../shared/src/types/textInference'
 
 export type InferenceRequestPayload = {
   developer_address: string
   model_id: string
+  mode?: 'risk' | 'text'
+  text_request?: TextInferenceRequest
   encrypted_input: Array<{
     ctHash: string
     utype: string | number
@@ -30,6 +33,17 @@ export type BackendInferenceRequest = {
   leader_address: string | null
   developer_address: string
   model_id: string
+  mode?: 'risk' | 'text'
+  text_mode?: boolean
+  text_request?: {
+    prompt_cid: string
+    encrypted_prompt_key: {
+      high: string
+      low: string
+    }
+    model_id?: string | null
+    coverage_enabled?: boolean
+  } | null
   encrypted_features: Array<{
     ct_hash: string
     utype: string | number
@@ -79,9 +93,30 @@ export type BackendInferenceRequest = {
   aggregated_confidence: number | null
   confirm_count: number
   reject_count: number
+  encrypted_output_key_high?: string | null
+  encrypted_output_key_low?: string | null
+  output_cid?: string | null
+  commitment_hash?: string | null
   created_at: string
   updated_at: string
 }
+
+export type BackendTextInferenceStatus = {
+  job_id: string
+  status: 'QUEUED' | 'ACCEPTED' | 'REJECTED' | 'DISPUTED' | 'TIMEDOUT'
+  output_cid?: string | null
+  commitment_hash?: string | null
+  encrypted_output_key_high?: string | null
+  encrypted_output_key_low?: string | null
+  quorum?: {
+    verifier_addresses: string[]
+    confirmations: number
+    confidence: number
+  } | null
+  dispute_deadline?: number | null
+}
+
+export type BackendInferenceStatusResponse = BackendInferenceRequest | BackendTextInferenceStatus
 
 export type CoverageQuote = {
   request_id: string
@@ -103,7 +138,7 @@ export const inferenceApi = {
     return apiClient.post<BackendInferenceRequest>('/v1/inference/requests', payload)
   },
   getStatus(requestId: string) {
-    return apiClient.get<BackendInferenceRequest>(`/v1/inference/${requestId}`)
+    return apiClient.get<BackendInferenceStatusResponse>(`/v1/inference/${requestId}`)
   },
   list() {
     return apiClient.get<BackendInferenceRequest[]>('/v1/inference')

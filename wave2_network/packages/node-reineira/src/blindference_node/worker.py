@@ -10,6 +10,8 @@ import httpx
 from blindference_node.cofhe_bridge import CofheBridgeClient
 from blindference_node.config import NodeSettings
 from blindference_node.infrastructure.executors import CloudInferenceExecutor
+from blindference_node.infrastructure.executors.cloud_provider import run_text_inference
+from blindference_node.text_handler import process_text_task_as_leader, process_text_task_as_verifier
 
 
 logger = logging.getLogger("blindference.node")
@@ -81,6 +83,9 @@ class BlindferenceDemoWorker:
         metadata = request.get("metadata", {})
         provider = str(metadata.get("provider", self.settings.provider))
         model = str(metadata.get("model", self._model_for_provider(provider)))
+        if bool(request.get("text_mode")) or str(request.get("mode", "")).lower() == "text":
+            await self._handle_text_request(client, request, role, submission_key)
+            return
 
         logger.info("[%s] checking permit for task_id=%s", operator_address, request.get("task_id"))
         try:
@@ -156,6 +161,81 @@ class BlindferenceDemoWorker:
         )
         self._submitted_tasks.add(submission_key)
 
+    async def _handle_text_request(
+        self,
+        client: httpx.AsyncClient,
+        request: dict[str, Any],
+        role: str,
+        submission_key: str,
+    ) -> None:
+        operator_address = self.cofhe_bridge.operator_address if self.cofhe_bridge else "unknown"
+        logger.info(
+            "[%s] processing text task request_id=%s task_id=%s role=%s model_id=%s",
+            operator_address,
+            request.get("request_id"),
+            request.get("task_id"),
+            role,
+            request.get("model_id"),
+        )
+
+        config = {
+            "icl_base_url": self.settings.icl_base_url,
+            "llm_model": self.settings.llm_model,
+            "operator_address": self.cofhe_bridge.operator_address if self.cofhe_bridge else "",
+            "decrypt_prompt_key": self._decrypt_text_prompt_key,
+            "encrypt_output_key": self._encrypt_text_output_key,
+            "text_stub_prompt_key_hex": self.settings.text_stub_prompt_key_hex,
+            "submit_leader_text_result": lambda job_id, payload: self.submit_leader_text_result(client, job_id, payload),
+            "submit_verifier_text_verdict": lambda job_id, payload: self.submit_verifier_text_verdict(client, job_id, payload),
+        }
+
+        if role == "leader":
+            result = await process_text_task_as_leader(
+                request,
+                lambda prompt, model_name=None: run_text_inference(prompt, model_name=model_name, settings=self.settings),
+                config,
+            )
+        else:
+            result = await process_text_task_as_verifier(
+                request,
+                lambda prompt, model_name=None: run_text_inference(prompt, model_name=model_name, settings=self.settings),
+                config,
+            )
+
+        logger.info(
+            "[%s] text submission accepted by ICL for task_id=%s result=%s",
+            operator_address,
+            request.get("task_id"),
+            result.get("icl_response"),
+        )
+        self._submitted_tasks.add(submission_key)
+
+    async def _decrypt_text_prompt_key(self, high_handle: str, low_handle: str) -> bytes:
+        if self.cofhe_bridge:
+            return await self.cofhe_bridge.decrypt_prompt_key(
+                high_handle=high_handle,
+                low_handle=low_handle,
+            )
+
+        if self.settings.text_stub_prompt_key_hex:
+            return bytes.fromhex(self.settings.text_stub_prompt_key_hex.removeprefix("0x"))
+        raise ValueError("No CoFHE bridge configured for text prompt-key decryption")
+
+    async def _encrypt_text_output_key(self, values: list[int]) -> dict[str, dict[str, Any]]:
+        if self.cofhe_bridge:
+            encrypted = await self.cofhe_bridge.encrypt_uint256_values(values=values)
+            if len(encrypted) != 2:
+                raise ValueError(f"Expected 2 encrypted output-key halves, received {len(encrypted)}")
+            return {
+                "high": dict(encrypted[0]),
+                "low": dict(encrypted[1]),
+            }
+
+        return {
+            "high": {"ctHash": str(values[0]), "securityZone": 0, "utype": 8, "signature": "0x"},
+            "low": {"ctHash": str(values[1]), "securityZone": 0, "utype": 8, "signature": "0x"},
+        }
+
     async def _decrypt_features(
         self,
         encrypted_features: list[dict[str, Any]],
@@ -225,3 +305,29 @@ class BlindferenceDemoWorker:
         if provider.lower() in {"gemini", "google-gemini"}:
             return self.settings.gemini_model
         return self.settings.groq_model
+
+    async def submit_leader_text_result(
+        self,
+        client: httpx.AsyncClient,
+        job_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        response = await client.post(
+            "/internal/task/result",
+            json={"job_id": job_id, **payload},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def submit_verifier_text_verdict(
+        self,
+        client: httpx.AsyncClient,
+        job_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        response = await client.post(
+            "/internal/task/verify",
+            json={"job_id": job_id, **payload},
+        )
+        response.raise_for_status()
+        return response.json()

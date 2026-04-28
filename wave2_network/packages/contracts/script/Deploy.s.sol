@@ -10,6 +10,7 @@ import {ArbiterSelectionRegistry} from "../contracts/core/ArbiterSelectionRegist
 import {ExecutionCommitmentRegistry} from "../contracts/core/ExecutionCommitmentRegistry.sol";
 import {NodeAttestationRegistry} from "../contracts/core/NodeAttestationRegistry.sol";
 import {PrevRandaoRandomness} from "../contracts/core/PrevRandaoRandomness.sol";
+import {PromptKeyStore} from "../contracts/core/PromptKeyStore.sol";
 import {ReputationRegistry} from "../contracts/core/ReputationRegistry.sol";
 import {RewardAccumulator} from "../contracts/core/RewardAccumulator.sol";
 import {MockAgentIdentityRegistry} from "../contracts/mocks/MockAgentIdentityRegistry.sol";
@@ -33,6 +34,7 @@ contract DeployScript is Script {
         RewardAccumulator rewardAccumulator = _deployRewardAccumulator(owner, dispatcher, reputation, escrowReleaser);
         NodeAttestationRegistry nodeAttestation = _deployNodeAttestation(owner);
         AgentConfigRegistry agentConfig = _deployAgentConfig(owner, identity);
+        PromptKeyStore promptKeyStore = new PromptKeyStore();
 
         identity.register(1, owner);
         identity.register(2, owner);
@@ -41,6 +43,7 @@ contract DeployScript is Script {
 
         console2.log("NODE_ATTESTATION_REGISTRY_ADDRESS=", address(nodeAttestation));
         console2.log("EXECUTION_COMMITMENT_REGISTRY_ADDRESS=", address(execution));
+        console2.log("PROMPT_KEY_STORE_ADDRESS=", address(promptKeyStore));
         console2.log("AGENT_CONFIG_REGISTRY_ADDRESS=", address(agentConfig));
         console2.log("REPUTATION_REGISTRY_ADDRESS=", address(reputation));
         console2.log("REWARD_ACCUMULATOR_ADDRESS=", address(rewardAccumulator));

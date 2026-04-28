@@ -1,15 +1,28 @@
 import { useEffect, useState } from 'react'
 
-import { coverageApi, inferenceApi, type BackendInferenceRequest } from '../api/inferenceApi'
+import {
+  coverageApi,
+  inferenceApi,
+  type BackendInferenceRequest,
+  type BackendInferenceStatusResponse,
+  type BackendTextInferenceStatus,
+} from '../api/inferenceApi'
 
 export type DemoStatus = {
   request_id: string
   task_id: string
+  mode: 'risk' | 'text'
   status: 'QUEUED' | 'ASSIGNED' | 'EXECUTING' | 'VERIFYING' | 'ACCEPTED' | 'REJECTED' | 'DISPUTED'
   result?: {
     risk_score: number
     confidence: number
     execution_time_ms: number
+  }
+  text_result?: {
+    output_cid?: string
+    commitment_hash?: string
+    encrypted_output_key_high?: string
+    encrypted_output_key_low?: string
   }
   quorum: {
     leader: {
@@ -38,7 +51,7 @@ export type DemoStatus = {
   dispute_resolution_tx?: string
   timestamps: Record<string, number>
   developer_address: string
-  raw: BackendInferenceRequest
+  raw: BackendInferenceStatusResponse
 }
 
 function hashLike(value: string | null | undefined) {
@@ -68,6 +81,10 @@ function deriveStage(request: BackendInferenceRequest): DemoStatus['status'] {
   }
 
   return 'ASSIGNED'
+}
+
+function isTextStatusResponse(request: BackendInferenceStatusResponse): request is BackendTextInferenceStatus {
+  return !('request_id' in request)
 }
 
 function buildTimestamps(request: BackendInferenceRequest): Record<string, number> {
@@ -104,6 +121,7 @@ function mapRequestToStatus(request: BackendInferenceRequest, coverageRecommenda
   return {
     request_id: request.request_id,
     task_id: request.task_id,
+    mode: request.mode === 'text' || request.text_mode ? 'text' : 'risk',
     status: stage,
     result:
       request.leader_submission || request.result_preview || request.risk_score !== null
@@ -114,6 +132,15 @@ function mapRequestToStatus(request: BackendInferenceRequest, coverageRecommenda
               request.leader_submission?.confidence ??
               0,
             execution_time_ms: 1240,
+          }
+        : undefined,
+    text_result:
+      request.mode === 'text' || request.text_mode
+        ? {
+            output_cid: request.output_cid ?? undefined,
+            commitment_hash: request.commitment_hash ?? undefined,
+            encrypted_output_key_high: request.encrypted_output_key_high ?? undefined,
+            encrypted_output_key_low: request.encrypted_output_key_low ?? undefined,
           }
         : undefined,
     quorum: {
@@ -160,6 +187,50 @@ function mapRequestToStatus(request: BackendInferenceRequest, coverageRecommenda
   }
 }
 
+function mapTextStatusToDemoStatus(
+  requestId: string,
+  request: BackendTextInferenceStatus,
+): DemoStatus {
+  const stage =
+    request.status === 'TIMEDOUT'
+      ? 'REJECTED'
+      : request.status
+
+  return {
+    request_id: request.job_id || requestId,
+    task_id: request.job_id || requestId,
+    mode: 'text',
+    status: stage,
+    text_result: {
+      output_cid: request.output_cid ?? undefined,
+      commitment_hash: request.commitment_hash ?? undefined,
+      encrypted_output_key_high: request.encrypted_output_key_high ?? undefined,
+      encrypted_output_key_low: request.encrypted_output_key_low ?? undefined,
+    },
+    quorum: {
+      leader: null,
+      verifiers: (request.quorum?.verifier_addresses ?? []).map((address) => ({
+        address,
+        verdict: request.status === 'ACCEPTED' ? 'CONFIRM' : null,
+        confidence: request.quorum?.confidence ?? 0,
+      })),
+      confirm_count: request.quorum?.confirmations ?? 0,
+      reject_count: 0,
+    },
+    coverage_id: undefined,
+    coverage_recommendation: undefined,
+    result_commit_tx: undefined,
+    escrow_creation_tx: undefined,
+    escrow_release_tx: undefined,
+    coverage_purchase_tx: undefined,
+    dispute_submission_tx: undefined,
+    dispute_resolution_tx: undefined,
+    timestamps: {},
+    developer_address: '',
+    raw: request,
+  }
+}
+
 export function useInferenceStatus(requestId: string) {
   const [status, setStatus] = useState<DemoStatus | null>(null)
 
@@ -177,10 +248,12 @@ export function useInferenceStatus(requestId: string) {
         if (!mounted) return
 
         setStatus(
-          mapRequestToStatus(
-            requestResponse.data,
-            coverageResponse?.data.recommendation,
-          ),
+          isTextStatusResponse(requestResponse.data)
+            ? mapTextStatusToDemoStatus(requestId, requestResponse.data)
+            : mapRequestToStatus(
+                requestResponse.data,
+                coverageResponse?.data.recommendation,
+              ),
         )
       } catch (error) {
         console.error('Error polling status:', error)

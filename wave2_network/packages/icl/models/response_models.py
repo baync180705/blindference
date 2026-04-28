@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .text_inference import TextInferenceRequest
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -76,11 +78,15 @@ class VerifierVerdictResponse(BaseModel):
 
 
 class InferenceRequestResponse(BaseModel):
+    job_id: str | None = None
     request_id: str
     task_id: str
     leader_address: str | None = None
     developer_address: str
     model_id: str
+    mode: Literal["risk", "text"] = "risk"
+    text_request: TextInferenceRequest | None = None
+    text_mode: bool = False
     encrypted_features: list[EncryptedFeatureResponse]
     feature_types: list[str]
     loan_id: str | None = None
@@ -92,6 +98,13 @@ class InferenceRequestResponse(BaseModel):
     verifier_count: int
     quorum: QuorumAssignmentResponse
     metadata: dict[str, Any] = Field(default_factory=dict)
+    prompt_cid: str | None = None
+    encrypted_prompt_key_high: str | None = None
+    encrypted_prompt_key_low: str | None = None
+    encrypted_output_key_high: str | None = None
+    encrypted_output_key_low: str | None = None
+    output_cid: str | None = None
+    commitment_hash: str | None = None
     result_hash: str | None = None
     result_preview: str | None = None
     risk_score: int | None = None

@@ -5,6 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 
 import httpx
 from web3 import Web3
@@ -208,3 +209,53 @@ class CloudInferenceExecutor:
         score += max(0, min(25, defaults * 12))
         score -= max(0, min(20, int(age / 365)))
         return max(0, min(100, score))
+
+
+async def run_text_inference(
+    prompt: str,
+    model_name: str | None = None,
+    *,
+    settings: NodeSettings | None = None,
+) -> str:
+    resolved_model = model_name or (
+        settings.llm_model
+        if settings is not None
+        else os.getenv("LLM_MODEL") or "gpt-4o-mini"
+    )
+    openai_api_key = (
+        settings.openai_api_key
+        if settings is not None
+        else os.getenv("OPENAI_API_KEY")
+    )
+    base_url = (
+        settings.llm_base_url
+        if settings is not None
+        else os.getenv("LLM_BASE_URL") or "http://localhost:11434/v1"
+    )
+
+    payload = {
+        "model": resolved_model,
+        "temperature": 0,
+        "seed": 42,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant. Be concise and deterministic."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+
+    if openai_api_key:
+        headers = {"Authorization": f"Bearer {openai_api_key}"}
+        url = "https://api.openai.com/v1/chat/completions"
+    else:
+        headers = {}
+        url = f"{base_url.rstrip('/')}/chat/completions"
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+
+    content = data["choices"][0]["message"]["content"]
+    if not content:
+        raise ValueError("Empty response from text inference provider")
+    return str(content)

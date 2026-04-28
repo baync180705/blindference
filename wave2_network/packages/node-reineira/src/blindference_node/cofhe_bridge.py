@@ -38,6 +38,31 @@ class CofheBridgeClient:
         result = await self._run(payload)
         return [int(value) for value in result["values"]]
 
+    async def decrypt_prompt_key(self, *, high_handle: str, low_handle: str) -> bytes:
+        payload = {
+            "action": "decrypt_prompt_key",
+            "rpcUrl": self.rpc_url,
+            "chainId": self.chain_id,
+            "privateKey": self.private_key,
+            "highHandle": str(high_handle),
+            "lowHandle": str(low_handle),
+        }
+        result = await self._run(payload)
+        high = int(result["high"])
+        low = int(result["low"])
+        return high.to_bytes(16, "big") + low.to_bytes(16, "big")
+
+    async def encrypt_uint256_values(self, *, values: list[int]) -> list[dict]:
+        payload = {
+            "action": "encrypt_uint256",
+            "rpcUrl": self.rpc_url,
+            "chainId": self.chain_id,
+            "privateKey": self.private_key,
+            "values": [str(value) for value in values],
+        }
+        result = await self._run(payload)
+        return list(result["results"])
+
     async def _run(self, payload: dict) -> dict:
         process = await asyncio.create_subprocess_exec(
             "node",

@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .text_inference import TextInferenceRequest
+
 
 class EncryptedFeature(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -27,13 +29,15 @@ class PermitEntry(BaseModel):
 
 class InferenceRequestCreate(BaseModel):
     developer_address: str
-    model_id: str
+    model_id: str | None = None
+    mode: str = Field(default="risk", description="'risk' or 'text'")
+    text_request: TextInferenceRequest | None = None
     encrypted_features: list[EncryptedFeature] = Field(default_factory=list)
     encrypted_input: list[EncryptedFeature] | EncryptedFeature | None = None
     permits: list[PermitEntry] = Field(default_factory=list)
     leader_address: str | None = None
     verifier_addresses: list[str] = Field(default_factory=list)
-    feature_types: list[str]
+    feature_types: list[str] = Field(default_factory=list)
     loan_id: str | None = None
     coverage_type: str | None = None
     max_fee_gnk: int = Field(default=0, ge=0)
@@ -48,6 +52,10 @@ class InferenceRequestCreate(BaseModel):
         if self.encrypted_input is not None:
             return [self.encrypted_input]
         return self.encrypted_features
+
+
+class InferenceRequest(InferenceRequestCreate):
+    pass
 
 
 class VerifierVerdictInput(BaseModel):

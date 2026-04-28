@@ -11,6 +11,7 @@ from models.request_models import (
     VerifierVerdictSubmissionRequest,
 )
 from models.response_models import InferenceCommitResponse, InferenceRequestResponse, QuorumPreviewResponse
+from models.text_inference import TextInferenceResult
 from services import ServiceContainer, get_service_container
 
 router = APIRouter(prefix="/v1/inference", tags=["inference"])
@@ -48,14 +49,14 @@ async def get_quorum_preview(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-@router.post("/requests", response_model=InferenceRequestResponse)
+@router.post("/requests", response_model=InferenceRequestResponse | TextInferenceResult)
 async def create_inference_request(
     payload: InferenceRequestCreate,
     _: bool = Depends(rate_limit_guard),
     services: ServiceContainer = Depends(get_service_container),
-) -> InferenceRequestResponse:
+) -> InferenceRequestResponse | TextInferenceResult:
     try:
-        return await services.quorum_service.create_request(payload)
+        return await services.quorum_service.create_request_status(payload)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -90,24 +91,24 @@ async def submit_verifier_verdict(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-@router.get("/task/{task_id}", response_model=InferenceRequestResponse)
+@router.get("/task/{task_id}", response_model=InferenceRequestResponse | TextInferenceResult)
 async def get_inference_request_by_task_id(
     task_id: str,
     services: ServiceContainer = Depends(get_service_container),
-) -> InferenceRequestResponse:
+) -> InferenceRequestResponse | TextInferenceResult:
     try:
-        return await services.quorum_service.get_request_by_task_id(task_id)
+        return await services.quorum_service.get_request_status_by_task_id(task_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-@router.get("/{request_id}", response_model=InferenceRequestResponse)
+@router.get("/{request_id}", response_model=InferenceRequestResponse | TextInferenceResult)
 async def get_inference_request(
     request_id: str,
     services: ServiceContainer = Depends(get_service_container),
-) -> InferenceRequestResponse:
+) -> InferenceRequestResponse | TextInferenceResult:
     try:
-        return await services.quorum_service.get_request(request_id)
+        return await services.quorum_service.get_request_status(request_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
